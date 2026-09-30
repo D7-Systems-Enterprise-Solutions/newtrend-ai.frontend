@@ -42,7 +42,7 @@ export default function App() {
   const [executions, setExecutions] = useState<Execution[]>([])
   const [connected, setConnected] = useState(false)
   const [tab, setTab] = useState<Tab>('simple')
-  const current = executions[0]
+  const current = executions.find((execution) => execution.userAction) ?? executions[0]
 
   useEffect(() => {
     let socket: WebSocket | undefined
@@ -73,7 +73,7 @@ export default function App() {
 
   return (
     <main className="min-h-svh bg-housing text-ink">
-      <div className="mx-auto flex min-h-svh max-w-xl flex-col px-5 py-8">
+        <div className="mx-auto flex min-h-svh max-w-3xl flex-col px-5 py-8">
         <header className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span
@@ -145,11 +145,11 @@ function StepList({ steps, detailed }: { steps: Step[]; detailed: boolean }) {
           <span>
             <span className="font-sans text-base">{step.name}</span>
             {step.durationMs != null ? <span className="ml-2 text-quiet">{formatMs(step.durationMs)}</span> : null}
-            {detailed && step.source?.file ? (
-              <span className="mt-1 block text-quiet">
-                {step.source.file}
-                {step.source.function ? `  ${step.source.function}` : ''}
-                {step.source.line ? `:${step.source.line}` : ''}
+            {detailed && (step.source?.file || step.source?.function) ? (
+              <span className="mt-1 block break-all text-quiet">
+                {step.source?.file}
+                {step.source?.function ? `  ${step.source.function}` : ''}
+                {step.source?.line ? `:${step.source.line}` : ''}
               </span>
             ) : null}
           </span>
