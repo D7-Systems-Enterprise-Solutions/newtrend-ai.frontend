@@ -76,7 +76,9 @@ export function beginLookup(stack: string, parent: Span | undefined): SourceLook
   if (immediate?.file && parent) {
     lookup.source = immediate;
     lookup.done = true;
-    writeSource(parent, immediate);
+    if (!preferred) {
+      writeSource(parent, immediate);
+    }
     return lookup;
   }
 
@@ -87,7 +89,7 @@ export function beginLookup(stack: string, parent: Span | undefined): SourceLook
   void callerFromStack(stack, preferred)
     .then((source) => {
       lookup.source = source ?? immediate ?? undefined;
-      if (lookup.source && parent?.isRecording()) {
+      if (lookup.source && parent?.isRecording() && !preferredFiles.has(parent)) {
         writeSource(parent, lookup.source);
       }
     })
@@ -147,10 +149,6 @@ function finishHold(span: Span): void {
 
 export function finishLookup(span: Span, lookup: SourceLookup | undefined): void {
   if (!lookup?.done || !lookup.source || sourced.has(span)) {
-    return;
-  }
-
-  if (lookup.parent && sourced.has(lookup.parent)) {
     return;
   }
 

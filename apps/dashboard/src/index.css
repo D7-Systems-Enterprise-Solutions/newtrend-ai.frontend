@@ -13,8 +13,30 @@
   --color-ok: #2f6b45;
 }
 
+[data-theme="dark"] {
+  --color-housing: #161310;
+  --color-tape: #241f1a;
+  --color-ink: #f3ecdf;
+  --color-quiet: #b3a89a;
+  --color-rule: #3a342c;
+  --color-signal: #d85a1a;
+  --color-fail: #e07068;
+  --color-ok: #7dbe96;
+  color-scheme: dark;
+}
+
 body {
   margin: 0;
+  background: var(--color-housing);
+  color: var(--color-ink);
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--color-signal);
+  outline-offset: 2px;
 }
 
 @media (prefers-reduced-motion: reduce) {
