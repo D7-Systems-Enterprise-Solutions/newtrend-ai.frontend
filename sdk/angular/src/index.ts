@@ -40,11 +40,20 @@ export interface UserActionDetails {
 
 const tracerName = '@ai-newtrend/angular';
 const actionSelector =
-  'button, a, [role="button"], input[type="submit"], input[type="button"], input[type="image"]';
+  'button, a, select, [role="button"], [role="combobox"], [role="option"], input[type="submit"], input[type="button"], input[type="image"]';
 const submitSelector = 'button[type="submit"], input[type="submit"], button:not([type])';
 const xhrLookups = new WeakMap<XMLHttpRequest, SourceLookup>();
+const xhrUrls = new WeakMap<XMLHttpRequest, string>();
 const fetchLookups: SourceLookup[] = [];
 let callerPatched = false;
+
+const settleMs = 2000;
+const quietMs = 700;
+const maxActionMs = 12000;
+let currentAction: Span | undefined;
+let actionStarted = 0;
+let requestsInFlight = 0;
+let closeTimer: number | undefined;
 
 export function initAINewtrend(options: AINewtrendOptions): void {
   Error.stackTraceLimit = Math.max(Error.stackTraceLimit, 80);
@@ -53,7 +62,7 @@ export function initAINewtrend(options: AINewtrendOptions): void {
     ? endpoint
     : `${endpoint.replace(/\/$/, '')}/v1/traces`;
   const propagateTo = options.propagateTo ?? /.*/;
-  const ignoreUrls = [/\/v1\/traces(?:$|\?)/, /\.map(?:$|\?)/];
+  const ignoreUrls = [/\/v1\/traces(?:$|\?)/, /\.map(?:$|\?)/, /\.(?:js|css|woff2?)(?:$|\?)/];
 
   propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
@@ -86,7 +95,8 @@ export function initAINewtrend(options: AINewtrendOptions): void {
 
           span.setAttribute('ai.newtrend.layer', 'frontend');
           span.setAttribute('ai.newtrend.user_action', label);
-          const owner = findAppComponent(element);
+          holdAction(span);
+          const owner = findAppComponent(controlElement(element) ?? element);
           if (owner) {
             pinComponent(span, { file: owner.file, name: owner.name, line: owner.line });
             wrapMethods(Object.getPrototypeOf(owner.component) as object);
@@ -174,29 +184,101 @@ interface NgDebug {
 
 interface NgGlobal {
   getComponent?: (node: Element) => object | null;
+  getOwningComponent?: (node: Element) => object | null;
+  getHostElement?: (component: object) => Element | null;
 }
 
 function findAppComponent(start: HTMLElement): { component: object; file: string; name?: string; line?: number } | null {
   const ng = (window as unknown as { ng?: NgGlobal }).ng;
-  if (!ng?.getComponent) {
+  if (!ng?.getComponent && !ng?.getOwningComponent) {
     return null;
   }
 
-  let node: Element | null = start;
-  while (node) {
-    if (node.tagName.includes('-') && ng.getComponent) {
-      try {
-        const component = ng.getComponent(node);
-        const debug = component ? readDebug(component) : null;
-        if (component && debug) {
-          return { component, ...debug };
-        }
-      } catch {
-        // This element is not a component host.
+  const owner = owningAppComponent(ng, start) ?? owningAppComponent(ng, overlayTrigger(start));
+  return owner;
+}
+
+function owningAppComponent(
+  ng: NgGlobal,
+  start: HTMLElement | null,
+): { component: object; file: string; name?: string; line?: number } | null {
+  const seen = new Set<EventTarget>();
+  let node: HTMLElement | null = start;
+  while (node && !seen.has(node)) {
+    seen.add(node);
+    if (node.tagName.includes('-')) {
+      const hosted = componentAt(ng, node);
+      const debug = hosted ? readDebug(hosted) : null;
+      if (hosted && debug) {
+        return { component: hosted, ...debug };
       }
     }
 
-    node = node.parentElement;
+    node = parentElement(node);
+  }
+
+  return null;
+}
+
+function componentAt(ng: NgGlobal, node: Element): object | null {
+  try {
+    return ng.getComponent?.(node) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function parentElement(node: Element): HTMLElement | null {
+  if (node.parentElement) {
+    return node.parentElement;
+  }
+
+  const root = node.getRootNode();
+  if (root instanceof ShadowRoot && root.host instanceof HTMLElement) {
+    return root.host;
+  }
+
+  return null;
+}
+
+function overlayTrigger(start: HTMLElement | null): HTMLElement | null {
+  let node: Element | null = start;
+  const seen = new Set<EventTarget>();
+  while (node && !seen.has(node)) {
+    seen.add(node);
+    if (node.id) {
+      const trigger = document.querySelector(`[aria-controls="${cssEscape(node.id)}"], [aria-owns="${cssEscape(node.id)}"]`);
+      if (trigger instanceof HTMLElement && !node.contains(trigger)) {
+        return trigger;
+      }
+    }
+
+    node = parentElement(node);
+  }
+
+  return null;
+}
+
+function cssEscape(value: string): string {
+  return window.CSS?.escape ? window.CSS.escape(value) : value.replace(/"/g, '\\"');
+}
+
+function controlElement(element: HTMLElement): HTMLElement | null {
+  if (element.matches(actionSelector)) {
+    return element;
+  }
+
+  return closestControl(element);
+}
+
+function closestControl(element: HTMLElement): HTMLElement | null {
+  let node: HTMLElement | null = element;
+  while (node) {
+    if (node.matches(actionSelector)) {
+      return node;
+    }
+
+    node = parentElement(node);
   }
 
   return null;
@@ -252,6 +334,19 @@ function installCallerCapture(): void {
   }
 
   callerPatched = true;
+  const originalSend = XMLHttpRequest.prototype.send;
+  XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
+    const action = currentAction;
+    const url = xhrUrls.get(this) ?? '';
+    noteRequestStart(url);
+    this.addEventListener('loadend', () => noteRequestEnd(url), { once: true });
+    if (action?.isRecording()) {
+      return context.with(trace.setSpan(context.active(), action), () => originalSend.call(this, body));
+    }
+
+    return originalSend.call(this, body);
+  };
+
   const originalOpen = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (
     method: string,
@@ -261,6 +356,7 @@ function installCallerCapture(): void {
     password?: string | null,
   ) {
     const href = String(url);
+    xhrUrls.set(this, href);
     if (!isInternal(href)) {
       xhrLookups.set(this, beginLookup(captureStack(), trace.getSpan(context.active())));
     }
@@ -270,16 +366,94 @@ function installCallerCapture(): void {
 
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
-    if (!isInternal(requestUrl(input))) {
-      fetchLookups.push(beginLookup(captureStack(), trace.getSpan(context.active())));
+    const url = requestUrl(input);
+    const action = currentAction;
+    if (!isInternal(url)) {
+      fetchLookups.push(beginLookup(captureStack(), action ?? trace.getSpan(context.active())));
     }
 
-    return originalFetch(input, init);
+    noteRequestStart(url);
+    const send = () => originalFetch(input, init).finally(() => noteRequestEnd(url));
+    if (action?.isRecording() && !isInternal(url)) {
+      return context.with(trace.setSpan(context.active(), action), send);
+    }
+
+    return send();
   };
+}
+
+function holdAction(span: Span): void {
+  finishAction();
+  currentAction = span;
+  actionStarted = Date.now();
+  requestsInFlight = 0;
+  const original = span.end.bind(span);
+  let requested = false;
+  let endTime: Parameters<Span['end']>[0];
+  span.end = (time) => {
+    requested = true;
+    endTime = time;
+    armClose(settleMs);
+  };
+
+  const finish = () => {
+    if (currentAction !== span) {
+      return;
+    }
+
+    currentAction = undefined;
+    window.clearTimeout(closeTimer);
+    span.end = original;
+    if (requested) {
+      original(endTime);
+    }
+  };
+
+  (span as Span & { __finish?: () => void }).__finish = finish;
+}
+
+function finishAction(): void {
+  const span = currentAction as (Span & { __finish?: () => void }) | undefined;
+  span?.__finish?.();
+}
+
+function armClose(delay: number): void {
+  window.clearTimeout(closeTimer);
+  const remaining = maxActionMs - (Date.now() - actionStarted);
+  if (remaining <= 0) {
+    finishAction();
+    return;
+  }
+
+  closeTimer = window.setTimeout(finishAction, Math.min(delay, remaining));
+}
+
+function noteRequestStart(url: string): void {
+  if (!currentAction?.isRecording() || isInternal(url) || isAsset(url)) {
+    return;
+  }
+
+  requestsInFlight += 1;
+  window.clearTimeout(closeTimer);
+}
+
+function noteRequestEnd(url: string): void {
+  if (!currentAction || isInternal(url) || isAsset(url)) {
+    return;
+  }
+
+  requestsInFlight = Math.max(0, requestsInFlight - 1);
+  if (requestsInFlight === 0) {
+    armClose(quietMs);
+  }
 }
 
 function isInternal(url: string): boolean {
   return /\/v1\/traces(?:$|\?)/.test(url) || /\.map(?:$|\?)/.test(url);
+}
+
+function isAsset(url: string): boolean {
+  return /\.(?:js|css|woff2?)(?:$|\?)/.test(url);
 }
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -300,8 +474,8 @@ function describeInteraction(eventName: string, element: HTMLElement): string | 
     return `Submit "${controlText(named)}"`;
   }
 
-  const control = element.matches(actionSelector) ? element : element.closest(actionSelector);
-  if (!(control instanceof HTMLElement)) {
+  const control = controlElement(element);
+  if (!control) {
     return null;
   }
 
