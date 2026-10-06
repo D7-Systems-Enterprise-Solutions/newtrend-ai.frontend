@@ -16,7 +16,11 @@ export type Step = {
   startedAt: string
   source?: SourceLocation | null
   httpStatus?: number | null
+  httpUrl?: string | null
+  httpHeaders?: string | null
+  httpBody?: string | null
   sqlText?: string | null
+  kind?: string | null
 }
 
 export type Execution = {

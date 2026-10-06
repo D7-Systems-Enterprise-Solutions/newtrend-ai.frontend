@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { api, type Execution, type Investigation, type InvestigationAnswer, type Note, type PatchAction } from './api'
-import { formatClock, formatMs, labelStatus } from './format'
+import { executionLabel, formatClock, formatMs, labelStatus } from './format'
 import { ExecutionView } from './LiveView'
 
 export function InvestigateView({ refreshKey }: { refreshKey: number }) {
@@ -88,7 +88,7 @@ export function InvestigateView({ refreshKey }: { refreshKey: number }) {
               <li key={execution.traceId} className="border-t border-rule">
                 <button type="button" className="grid w-full grid-cols-[5.5rem_1fr_auto] gap-3 py-2 text-left" onClick={() => setOpenTrace(execution.traceId)}>
                   <time className="font-mono text-quiet">{formatClock(execution.startedAt)}</time>
-                  <span>{execution.userAction ?? execution.traceId}</span>
+                  <span>{executionLabel(execution)}</span>
                   <span className={execution.status === 'failed' ? 'text-fail' : 'text-ok'}>
                     {execution.durationMs != null ? formatMs(execution.durationMs) : ''} {labelStatus(execution.status)}
                   </span>

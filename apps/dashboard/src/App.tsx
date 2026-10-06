@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { api, type Investigation } from './api'
 import { BehaviorView } from './BehaviorView'
+import { ConfigurationView } from './ConfigurationView'
 import { InvestigateView } from './InvestigateView'
 import { LiveView } from './LiveView'
 import { PerformanceView } from './PerformanceView'
 import { applyTheme, initTheme, type Theme } from './theme'
 
-type Area = 'live' | 'investigate' | 'behavior' | 'performance'
+type Area = 'live' | 'investigate' | 'behavior' | 'performance' | 'configuration'
 
 export default function App() {
   const [area, setArea] = useState<Area>('live')
@@ -26,7 +27,7 @@ export default function App() {
 
   return (
     <main className="min-h-svh bg-housing text-ink">
-      <div className="mx-auto flex min-h-svh max-w-3xl flex-col px-5 py-8">
+      <div className="flex min-h-svh w-full flex-col px-5 py-8">
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="live-lamp size-3 rounded-full bg-signal motion-safe:animate-pulse" aria-hidden="true" />
@@ -37,6 +38,7 @@ export default function App() {
             <AreaButton active={area === 'investigate'} onClick={() => setArea('investigate')}>Investigate</AreaButton>
             <AreaButton active={area === 'behavior'} onClick={() => setArea('behavior')}>Behavior</AreaButton>
             <AreaButton active={area === 'performance'} onClick={() => setArea('performance')}>Performance</AreaButton>
+            <AreaButton active={area === 'configuration'} onClick={() => setArea('configuration')}>Configuration</AreaButton>
           </nav>
           <div className="flex gap-1 text-sm" role="group" aria-label="Theme">
             <AreaButton active={theme === 'day'} onClick={() => chooseTheme('day')}>Day</AreaButton>
@@ -48,6 +50,7 @@ export default function App() {
           {area === 'investigate' ? <InvestigateView refreshKey={refreshKey} /> : null}
           {area === 'behavior' ? <BehaviorView /> : null}
           {area === 'performance' ? <PerformanceView /> : null}
+          {area === 'configuration' ? <ConfigurationView /> : null}
         </section>
       </div>
     </main>
