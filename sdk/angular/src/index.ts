@@ -7,7 +7,7 @@ import {
   type Context,
   type Span,
 } from '@opentelemetry/api';
-import { W3CTraceContextPropagator } from '@opentelemetry/core';
+import { TraceState, W3CTraceContextPropagator } from '@opentelemetry/core';
 import { ZoneContextManager } from '@opentelemetry/context-zone';
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { registerInstrumentations } from '@opentelemetry/instrumentation';
@@ -42,16 +42,20 @@ const tracerName = '@ai-newtrend/angular';
 const actionSelector =
   'button, a, select, [role="button"], [role="combobox"], [role="option"], input[type="submit"], input[type="button"], input[type="image"]';
 const submitSelector = 'button[type="submit"], input[type="submit"], button:not([type])';
+type HttpCapture = { url: string; headers: string[]; body?: string };
+
 const xhrLookups = new WeakMap<XMLHttpRequest, SourceLookup>();
 const xhrUrls = new WeakMap<XMLHttpRequest, string>();
+const xhrCaptures = new WeakMap<XMLHttpRequest, HttpCapture>();
+const fetchCaptures = new WeakMap<object, HttpCapture>();
 const fetchLookups: SourceLookup[] = [];
+const maxHttpBody = 64 * 1024;
 let callerPatched = false;
 
-const settleMs = 2000;
-const quietMs = 700;
-const maxActionMs = 12000;
-let currentAction: Span | undefined;
-let actionStarted = 0;
+const burstQuietMs = 8000;
+const burstHeader = 'X-AI-Newtrend-Burst';
+let burstSpan: Span | undefined;
+let burstId: string | undefined;
 let requestsInFlight = 0;
 let closeTimer: number | undefined;
 
@@ -109,14 +113,22 @@ export function initAINewtrend(options: AINewtrendOptions): void {
         ignoreUrls,
         applyCustomAttributesOnSpan: (span, xhr) => {
           span.setAttribute('ai.newtrend.layer', 'http');
+          if (burstId) {
+            span.setAttribute('ai.newtrend.burst', burstId);
+          }
+          writeHttp(span, xhrCaptures.get(xhr));
           finishLookup(span, xhrLookups.get(xhr));
         },
       }),
       new FetchInstrumentation({
         propagateTraceHeaderCorsUrls: propagateTo,
         ignoreUrls,
-        applyCustomAttributesOnSpan: (span) => {
+        applyCustomAttributesOnSpan: (span, request) => {
           span.setAttribute('ai.newtrend.layer', 'http');
+          if (burstId) {
+            span.setAttribute('ai.newtrend.burst', burstId);
+          }
+          writeHttp(span, fetchCaptures.get(request));
           finishLookup(span, fetchLookups.shift());
         },
       }),
@@ -334,14 +346,39 @@ function installCallerCapture(): void {
   }
 
   callerPatched = true;
+  const originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
+    if (burstId && name.toLowerCase() === 'tracestate' && !value.includes('ai-newtrend=')) {
+      value = `ai-newtrend=${burstId}${value ? `,${value}` : ''}`;
+    }
+
+    const capture = xhrCaptures.get(this);
+    if (capture) {
+      rememberHeader(capture.headers, name, value);
+    }
+
+    return originalSetHeader.call(this, name, value);
+  };
+
   const originalSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body?: Document | XMLHttpRequestBodyInit | null) {
-    const action = currentAction;
+    const action = burstSpan;
     const url = xhrUrls.get(this) ?? '';
+    const capture = xhrCaptures.get(this);
+    if (capture) {
+      capture.body = textBody(body);
+    }
     noteRequestStart(url);
-    this.addEventListener('loadend', () => noteRequestEnd(url), { once: true });
-    if (action?.isRecording()) {
-      return context.with(trace.setSpan(context.active(), action), () => originalSend.call(this, body));
+    this.addEventListener('loadend', () => noteRequestEnd(url, action), { once: true });
+    if (action && burstId && !isInternal(url) && !isAsset(url)) {
+      try {
+        this.setRequestHeader(burstHeader, burstId);
+        this.setRequestHeader('tracestate', `ai-newtrend=${burstId}`);
+      } catch {
+        // open() was not called, or the header was already sent.
+      }
+
+      return context.with(burstContext(action), () => originalSend.call(this, body));
     }
 
     return originalSend.call(this, body);
@@ -357,6 +394,7 @@ function installCallerCapture(): void {
   ) {
     const href = String(url);
     xhrUrls.set(this, href);
+    xhrCaptures.set(this, { url: absoluteUrl(href), headers: [] });
     if (!isInternal(href)) {
       xhrLookups.set(this, beginLookup(captureStack(), trace.getSpan(context.active())));
     }
@@ -367,45 +405,63 @@ function installCallerCapture(): void {
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
-    const action = currentAction;
+    const action = burstSpan;
     if (!isInternal(url)) {
       fetchLookups.push(beginLookup(captureStack(), action ?? trace.getSpan(context.active())));
     }
 
     noteRequestStart(url);
-    const send = () => originalFetch(input, init).finally(() => noteRequestEnd(url));
-    if (action?.isRecording() && !isInternal(url)) {
-      return context.with(trace.setSpan(context.active(), action), send);
+    const belongs = Boolean(action && burstId && !isInternal(url) && !isAsset(url));
+    const stamped = belongs ? withBurstHeader(input, init) : { input, init };
+    rememberFetch(stamped, init?.body);
+    const send = () => originalFetch(stamped.input, stamped.init).finally(() => noteRequestEnd(url, action));
+    if (belongs && action) {
+      return context.with(burstContext(action), send);
     }
 
     return send();
   };
 }
 
+function burstContext(span: Span): Context {
+  const current = span.spanContext();
+  const traceState = (current.traceState ?? new TraceState()).set('ai-newtrend', burstId ?? '');
+  return trace.setSpanContext(context.active(), { ...current, traceState });
+}
+
 function holdAction(span: Span): void {
   finishAction();
-  currentAction = span;
-  actionStarted = Date.now();
+  burstId = crypto.randomUUID();
+  burstSpan = span;
+  span.setAttribute('ai.newtrend.burst', burstId);
   requestsInFlight = 0;
   const original = span.end.bind(span);
-  let requested = false;
-  let endTime: Parameters<Span['end']>[0];
+  let ended = false;
   span.end = (time) => {
-    requested = true;
-    endTime = time;
-    armClose(settleMs);
-  };
-
-  const finish = () => {
-    if (currentAction !== span) {
+    if (ended) {
       return;
     }
 
-    currentAction = undefined;
-    window.clearTimeout(closeTimer);
+    ended = true;
     span.end = original;
-    if (requested) {
-      original(endTime);
+    original(time);
+    if (burstSpan === span && requestsInFlight === 0) {
+      armClose(burstQuietMs);
+    }
+  };
+
+  const finish = () => {
+    if (burstSpan !== span) {
+      return;
+    }
+
+    window.clearTimeout(closeTimer);
+    burstSpan = undefined;
+    burstId = undefined;
+    if (!ended) {
+      ended = true;
+      span.end = original;
+      original();
     }
   };
 
@@ -413,23 +469,17 @@ function holdAction(span: Span): void {
 }
 
 function finishAction(): void {
-  const span = currentAction as (Span & { __finish?: () => void }) | undefined;
+  const span = burstSpan as (Span & { __finish?: () => void }) | undefined;
   span?.__finish?.();
 }
 
 function armClose(delay: number): void {
   window.clearTimeout(closeTimer);
-  const remaining = maxActionMs - (Date.now() - actionStarted);
-  if (remaining <= 0) {
-    finishAction();
-    return;
-  }
-
-  closeTimer = window.setTimeout(finishAction, Math.min(delay, remaining));
+  closeTimer = window.setTimeout(finishAction, delay);
 }
 
 function noteRequestStart(url: string): void {
-  if (!currentAction?.isRecording() || isInternal(url) || isAsset(url)) {
+  if (!burstSpan || isInternal(url) || isAsset(url)) {
     return;
   }
 
@@ -437,14 +487,145 @@ function noteRequestStart(url: string): void {
   window.clearTimeout(closeTimer);
 }
 
-function noteRequestEnd(url: string): void {
-  if (!currentAction || isInternal(url) || isAsset(url)) {
+function noteRequestEnd(url: string, span: Span | undefined): void {
+  if (!span || burstSpan !== span || isInternal(url) || isAsset(url)) {
     return;
   }
 
   requestsInFlight = Math.max(0, requestsInFlight - 1);
   if (requestsInFlight === 0) {
-    armClose(quietMs);
+    armClose(burstQuietMs);
+  }
+}
+
+function rememberFetch(
+  stamped: { input: RequestInfo | URL; init?: RequestInit },
+  body: BodyInit | null | undefined,
+): void {
+  const url = requestUrl(stamped.input);
+  if (isInternal(url) || isAsset(url)) {
+    return;
+  }
+
+  const capture = describeFetch(stamped.input, stamped.init, body);
+  if (stamped.input instanceof Request) {
+    fetchCaptures.set(stamped.input, capture);
+    return;
+  }
+
+  stamped.init = stamped.init ?? {};
+  fetchCaptures.set(stamped.init, capture);
+}
+
+function describeFetch(
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  body: BodyInit | null | undefined,
+): HttpCapture {
+  const request = input instanceof Request ? input : undefined;
+  const headers = new Headers(request?.headers);
+  if (init?.headers) {
+    new Headers(init.headers).forEach((value, key) => headers.set(key, value));
+  }
+
+  return {
+    url: absoluteUrl(requestUrl(input)),
+    headers: headerLines(headers),
+    body: textBody(body),
+  };
+}
+
+function rememberHeader(headers: string[], name: string, value: string): void {
+  if (!value) {
+    return;
+  }
+
+  const line = `${headerLabel(name)}: ${value}`;
+  const lower = name.toLowerCase();
+  const index = headers.findIndex((entry) => entry.slice(0, entry.indexOf(':')).toLowerCase() === lower);
+  if (index >= 0) {
+    headers[index] = line;
+    return;
+  }
+
+  headers.push(line);
+}
+
+function headerLines(headers: Headers): string[] {
+  const lines: string[] = [];
+  headers.forEach((value, key) => {
+    if (!value || !keepHttpHeader(key)) {
+      return;
+    }
+
+    lines.push(`${headerLabel(key)}: ${value}`);
+  });
+  return lines;
+}
+
+function writeHttp(span: Span, capture: HttpCapture | undefined): void {
+  if (!capture?.url) {
+    return;
+  }
+
+  span.setAttribute('url.full', capture.url);
+  const lines = capture.headers.filter((line) => keepHttpHeader(line.slice(0, line.indexOf(':'))));
+  if (lines.length > 0) {
+    span.setAttribute('ai.newtrend.http.headers', lines.join('\n'));
+  }
+  if (capture.body) {
+    span.setAttribute('ai.newtrend.http.body', capture.body);
+  }
+}
+
+function keepHttpHeader(name: string): boolean {
+  const lower = name.toLowerCase();
+  if (lower === 'authorization' || lower === 'content-type' || lower === 'accept') {
+    return true;
+  }
+
+  return lower.startsWith('x-') && lower !== burstHeader.toLowerCase();
+}
+
+function headerLabel(name: string): string {
+  const lower = name.toLowerCase();
+  if (lower === 'authorization') return 'Authorization';
+  if (lower === 'content-type') return 'Content-Type';
+  if (lower === 'accept') return 'Accept';
+  return name;
+}
+
+function textBody(body: Document | XMLHttpRequestBodyInit | BodyInit | null | undefined): string | undefined {
+  if (body == null || body === '') {
+    return undefined;
+  }
+
+  if (typeof body === 'string') {
+    return clipHttpBody(body);
+  }
+
+  if (typeof URLSearchParams !== 'undefined' && body instanceof URLSearchParams) {
+    const text = body.toString();
+    return text ? clipHttpBody(text) : undefined;
+  }
+
+  if (typeof Document !== 'undefined' && body instanceof Document) {
+    const text = new XMLSerializer().serializeToString(body);
+    return text ? clipHttpBody(text) : undefined;
+  }
+
+  return undefined;
+}
+
+function clipHttpBody(text: string): string {
+  return text.length > maxHttpBody ? text.slice(0, maxHttpBody) : text;
+}
+
+function absoluteUrl(url: string): string {
+  try {
+    return new URL(url, window.location.href).href;
+  } catch {
+    return url;
   }
 }
 
@@ -454,6 +635,23 @@ function isInternal(url: string): boolean {
 
 function isAsset(url: string): boolean {
   return /\.(?:js|css|woff2?)(?:$|\?)/.test(url);
+}
+
+function withBurstHeader(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): { input: RequestInfo | URL; init?: RequestInit } {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+  headers.set(burstHeader, burstId ?? '');
+  const traceState = headers.get('tracestate');
+  if (!traceState?.includes('ai-newtrend=')) {
+    headers.set('tracestate', `ai-newtrend=${burstId}${traceState ? `,${traceState}` : ''}`);
+  }
+  if (input instanceof Request) {
+    return { input: new Request(input, { ...init, headers }) };
+  }
+
+  return { input, init: { ...init, headers } };
 }
 
 function requestUrl(input: RequestInfo | URL): string {
@@ -513,6 +711,10 @@ class DropMarkedSpans implements SpanProcessor {
   constructor(private readonly next: SpanProcessor) {}
 
   onStart(span: SdkSpan, parentContext: Context): void {
+    if (burstId) {
+      span.setAttribute('ai.newtrend.burst', burstId);
+    }
+
     this.next.onStart(span, parentContext);
   }
 
