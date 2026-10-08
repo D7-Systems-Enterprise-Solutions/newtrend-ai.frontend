@@ -10,7 +10,7 @@
   },
   "private": true,
   "dependencies": {
-    "@ai-newtrend/angular": "file:../../../sdk/angular",
+    "@newtrend-ai/angular": "file:../../../sdk/angular",
     "@angular/common": "^19.2.0",
     "@angular/compiler": "^19.2.0",
     "@angular/core": "^19.2.0",

@@ -1,6 +1,6 @@
 import { sqlTables } from './format'
 
-const storageKey = 'ai-newtrend-sql-ai-prompt'
+const storageKey = 'newtrendai--sql-ai-prompt'
 
 export const defaultAiPrompt =
   'Explica el proposito exacto de esta sentencia.\nAdemás genera 2 opciones mas con mejoras de rendimiento: {sql}'
