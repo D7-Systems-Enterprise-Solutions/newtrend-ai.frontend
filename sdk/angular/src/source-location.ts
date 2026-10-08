@@ -516,7 +516,7 @@ function isSourceFile(file: string): boolean {
 }
 
 function isIgnored(file: string): boolean {
-  return /node_modules|zone\.js|@angular[\\/]|@opentelemetry|rxjs|polyfills|vite[\\/]deps|@ai-newtrend|source-location|\/sdk\/angular/i.test(
+  return /node_modules|zone\.js|@angular[\\/]|@opentelemetry|rxjs|polyfills|vite[\\/]deps|@newtrend-ai|source-location|\/sdk\/angular/i.test(
     file,
   );
 }

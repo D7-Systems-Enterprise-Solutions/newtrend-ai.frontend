@@ -1,4 +1,4 @@
-const storageKey = 'ai-newtrend-theme'
+const storageKey = 'newtrend-ai-theme'
 
 export type Theme = 'day' | 'dark'
 

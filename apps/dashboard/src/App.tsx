@@ -31,7 +31,7 @@ export default function App() {
         <header className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <span className="live-lamp size-3 rounded-full bg-signal motion-safe:animate-pulse" aria-hidden="true" />
-            <p className="m-0 text-lg font-bold leading-none">AI-Newtrend</p>
+            <p className="m-0 text-lg font-bold leading-none">Newtrend-ai</p>
           </div>
           <nav className="flex flex-wrap gap-1 text-sm" aria-label="Areas">
             <AreaButton active={area === 'live'} onClick={() => setArea('live')}>Live</AreaButton>

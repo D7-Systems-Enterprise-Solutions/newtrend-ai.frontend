@@ -1,13 +1,13 @@
-# AI-Newtrend for an Angular app
+# Newtrend-ai for an Angular app
 
 Add this SDK to any Angular frontend so each user action is one trace. HTTP calls made inside that action carry the same trace to your ASP.NET Core API.
 
-The SDK does not show the live view. Traces go to the AI-Newtrend core, and the dashboard reads them. Start the core from the backend repository before you use the app. See that repository's README for `dotnet run` and the dashboard.
+The SDK does not show the live view. Traces go to the Newtrend-ai core, and the dashboard reads them. Start the core from the backend repository before you use the app. See that repository's README for `dotnet run` and the dashboard.
 
-| Piece | Address |
-| --- | --- |
+| Piece       | Address                   |
+| ----------- | ------------------------- |
 | Core ingest | `http://127.0.0.1:4318` |
-| Dashboard | `http://127.0.0.1:4317` |
+| Dashboard   | `http://127.0.0.1:4317` |
 
 ## 1. Build the SDK
 
@@ -24,7 +24,7 @@ npm run build
 In your Angular app's `package.json`:
 
 ```json
-"@ai-newtrend/angular": "file:C:/Sources/ai-newtrend/ai-newtrend.FrontEnd/sdk/angular"
+"@newtrend-ai/angular": "file:C:/Sources/newtrend-ai/newtrend-ai.FrontEnd/sdk/angular"
 ```
 
 Use the real path on your machine. Then install:
@@ -40,7 +40,7 @@ npm install
 In `src/main.ts`, call `initAINewtrend` before `bootstrapApplication`. That starts click and submit capture, and it instruments `XMLHttpRequest` and `fetch`, which is what Angular's `HttpClient` uses. `zone.js` must already be loaded. Angular does that before `main.ts`.
 
 ```ts
-import { initAINewtrend } from '@ai-newtrend/angular';
+import { initAINewtrend } from '@newtrend-ai/angular';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { appConfig } from './app/app.config';
 import { AppComponent } from './app.component';
@@ -75,7 +75,7 @@ Clicks that are not on those controls are ignored. Typing is ignored.
 `traceUserAction` is only for work that does not come from a click or submit, such as a timer or a keyboard shortcut. HTTP calls inside its callback stay on that action. The third argument is optional source location.
 
 ```ts
-import { traceUserAction } from '@ai-newtrend/angular';
+import { traceUserAction } from '@newtrend-ai/angular';
 
 loadOnShortcut(): void {
   traceUserAction('Shortcut "Refresh"', () => this.http.get('/providers'), {

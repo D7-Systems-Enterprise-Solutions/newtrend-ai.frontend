@@ -24,7 +24,7 @@ import {
 import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
 import { beginLookup, captureStack, finishLookup, pinComponent, preloadSourceMaps, type SourceLookup } from './source-location';
 
-export interface AINewtrendOptions {
+export interface NewtrendAiOptions {
   appName: string;
   /** OTLP HTTP base address. /v1/traces is appended when missing. */
   endpoint?: string;
@@ -38,7 +38,7 @@ export interface UserActionDetails {
   line?: number;
 }
 
-const tracerName = '@ai-newtrend/angular';
+const tracerName = '@Newtrend-ai/angular';
 const actionSelector =
   'button, a, select, [role="button"], [role="combobox"], [role="option"], input[type="submit"], input[type="button"], input[type="image"]';
 const submitSelector = 'button[type="submit"], input[type="submit"], button:not([type])';
@@ -53,13 +53,13 @@ const maxHttpBody = 64 * 1024;
 let callerPatched = false;
 
 const burstQuietMs = 8000;
-const burstHeader = 'X-AI-Newtrend-Burst';
+const burstHeader = 'X-Newtrend-AI-Burst';
 let burstSpan: Span | undefined;
 let burstId: string | undefined;
 let requestsInFlight = 0;
 let closeTimer: number | undefined;
 
-export function initAINewtrend(options: AINewtrendOptions): void {
+export function initNewtrendAi(options: NewtrendAiOptions): void {
   Error.stackTraceLimit = Math.max(Error.stackTraceLimit, 80);
   const endpoint = options.endpoint ?? 'http://127.0.0.1:4318';
   const url = endpoint.endsWith('/v1/traces')
@@ -72,7 +72,7 @@ export function initAINewtrend(options: AINewtrendOptions): void {
 
   const exporter = new OTLPTraceExporter({
     url,
-    headers: { 'X-AI-Newtrend': '1' },
+    headers: { 'X-Newtrend-AI': '1' },
   });
   const provider = new WebTracerProvider({
     resource: new Resource({
@@ -92,13 +92,13 @@ export function initAINewtrend(options: AINewtrendOptions): void {
         shouldPreventSpanCreation: (eventName, element, span) => {
           const label = describeInteraction(eventName, element);
           if (!label) {
-            span.setAttribute('ai.newtrend.drop', true);
+            span.setAttribute('newtrend.ai.drop', true);
             span.end();
             return true;
           }
 
-          span.setAttribute('ai.newtrend.layer', 'frontend');
-          span.setAttribute('ai.newtrend.user_action', label);
+          span.setAttribute('newtrend.ai.layer', 'frontend');
+          span.setAttribute('newtrend.ai.user_action', label);
           holdAction(span);
           const owner = findAppComponent(controlElement(element) ?? element);
           if (owner) {
@@ -112,9 +112,9 @@ export function initAINewtrend(options: AINewtrendOptions): void {
         propagateTraceHeaderCorsUrls: propagateTo,
         ignoreUrls,
         applyCustomAttributesOnSpan: (span, xhr) => {
-          span.setAttribute('ai.newtrend.layer', 'http');
+          span.setAttribute('newtrend.ai.layer', 'http');
           if (burstId) {
-            span.setAttribute('ai.newtrend.burst', burstId);
+            span.setAttribute('newtrend.ai.burst', burstId);
           }
           writeHttp(span, xhrCaptures.get(xhr));
           finishLookup(span, xhrLookups.get(xhr));
@@ -124,9 +124,9 @@ export function initAINewtrend(options: AINewtrendOptions): void {
         propagateTraceHeaderCorsUrls: propagateTo,
         ignoreUrls,
         applyCustomAttributesOnSpan: (span, request) => {
-          span.setAttribute('ai.newtrend.layer', 'http');
+          span.setAttribute('newtrend.ai.layer', 'http');
           if (burstId) {
-            span.setAttribute('ai.newtrend.burst', burstId);
+            span.setAttribute('newtrend.ai.burst', burstId);
           }
           writeHttp(span, fetchCaptures.get(request));
           finishLookup(span, fetchLookups.shift());
@@ -146,8 +146,8 @@ export function traceUserAction<T>(
 ): Promise<T> {
   const tracer = trace.getTracer(tracerName);
   const attributes: Attributes = {
-    'ai.newtrend.layer': 'frontend',
-    'ai.newtrend.user_action': actionName,
+    'newtrend.ai.layer': 'frontend',
+    'newtrend.ai.user_action': actionName,
   };
 
   if (details?.functionName) {
@@ -348,8 +348,8 @@ function installCallerCapture(): void {
   callerPatched = true;
   const originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
-    if (burstId && name.toLowerCase() === 'tracestate' && !value.includes('ai-newtrend=')) {
-      value = `ai-newtrend=${burstId}${value ? `,${value}` : ''}`;
+    if (burstId && name.toLowerCase() === 'tracestate' && !value.includes('Newtrend-AI=')) {
+      value = `Newtrend-AI=${burstId}${value ? `,${value}` : ''}`;
     }
 
     const capture = xhrCaptures.get(this);
@@ -373,7 +373,7 @@ function installCallerCapture(): void {
     if (action && burstId && !isInternal(url) && !isAsset(url)) {
       try {
         this.setRequestHeader(burstHeader, burstId);
-        this.setRequestHeader('tracestate', `ai-newtrend=${burstId}`);
+        this.setRequestHeader('tracestate', `Newtrend-AI=${burstId}`);
       } catch {
         // open() was not called, or the header was already sent.
       }
@@ -425,7 +425,7 @@ function installCallerCapture(): void {
 
 function burstContext(span: Span): Context {
   const current = span.spanContext();
-  const traceState = (current.traceState ?? new TraceState()).set('ai-newtrend', burstId ?? '');
+  const traceState = (current.traceState ?? new TraceState()).set('Newtrend-AI', burstId ?? '');
   return trace.setSpanContext(context.active(), { ...current, traceState });
 }
 
@@ -433,7 +433,7 @@ function holdAction(span: Span): void {
   finishAction();
   burstId = crypto.randomUUID();
   burstSpan = span;
-  span.setAttribute('ai.newtrend.burst', burstId);
+  span.setAttribute('newtrend.ai.burst', burstId);
   requestsInFlight = 0;
   const original = span.end.bind(span);
   let ended = false;
@@ -571,10 +571,10 @@ function writeHttp(span: Span, capture: HttpCapture | undefined): void {
   span.setAttribute('url.full', capture.url);
   const lines = capture.headers.filter((line) => keepHttpHeader(line.slice(0, line.indexOf(':'))));
   if (lines.length > 0) {
-    span.setAttribute('ai.newtrend.http.headers', lines.join('\n'));
+    span.setAttribute('newtrend.ai.http.headers', lines.join('\n'));
   }
   if (capture.body) {
-    span.setAttribute('ai.newtrend.http.body', capture.body);
+    span.setAttribute('newtrend.ai.http.body', capture.body);
   }
 }
 
@@ -644,8 +644,8 @@ function withBurstHeader(
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set(burstHeader, burstId ?? '');
   const traceState = headers.get('tracestate');
-  if (!traceState?.includes('ai-newtrend=')) {
-    headers.set('tracestate', `ai-newtrend=${burstId}${traceState ? `,${traceState}` : ''}`);
+  if (!traceState?.includes('Newtrend-AI=')) {
+    headers.set('tracestate', `Newtrend-AI=${burstId}${traceState ? `,${traceState}` : ''}`);
   }
   if (input instanceof Request) {
     return { input: new Request(input, { ...init, headers }) };
@@ -712,14 +712,14 @@ class DropMarkedSpans implements SpanProcessor {
 
   onStart(span: SdkSpan, parentContext: Context): void {
     if (burstId) {
-      span.setAttribute('ai.newtrend.burst', burstId);
+      span.setAttribute('newtrend.ai.burst', burstId);
     }
 
     this.next.onStart(span, parentContext);
   }
 
   onEnd(span: ReadableSpan): void {
-    if (span.attributes['ai.newtrend.drop'] === true) {
+    if (span.attributes['newtrend.ai.drop'] === true) {
       return;
     }
 
