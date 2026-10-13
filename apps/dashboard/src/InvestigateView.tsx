@@ -57,21 +57,21 @@ export function InvestigateView({ refreshKey }: { refreshKey: number }) {
   return (
     <section>
       <form className="grid gap-2" onSubmit={(event) => { event.preventDefault(); create().catch((reason: Error) => setError(reason.message)) }}>
-        <input className="border border-rule bg-tape px-2 py-1" placeholder="Provider Save Failure" value={name} onChange={(event) => setName(event.target.value)} />
-        <input className="border border-rule bg-tape px-2 py-1" placeholder="Investigate why Save Provider fails" value={objective} onChange={(event) => setObjective(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" placeholder="Provider Save Failure" value={name} onChange={(event) => setName(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" placeholder="Investigate why Save Provider fails" value={objective} onChange={(event) => setObjective(event.target.value)} />
         <button type="submit" className="w-fit border border-ink px-3 py-1">Create investigation</button>
       </form>
       <form className="mt-4" onSubmit={(event) => { event.preventDefault(); load().catch((reason: Error) => setError(reason.message)) }}>
-        <input className="w-full border border-rule bg-tape px-2 py-1" placeholder="Search error, endpoint, action, file, SQL, or trace" value={query} onChange={(event) => setQuery(event.target.value)} />
+        <input className="w-full border border-rule bg-field px-3 py-2" placeholder="Search error, endpoint, action, file, SQL, or trace" value={query} onChange={(event) => setQuery(event.target.value)} />
       </form>
       {error ? <p className="mt-3 text-fail">{error}</p> : null}
       <ul className="mt-4 list-none p-0">
         {items.length === 0 ? <li className="text-quiet">Record a failing save, then attach it here.</li> : null}
         {items.map((item) => (
           <li key={item.id} className="border-t border-rule">
-            <button type="button" className="w-full py-2 text-left" onClick={() => open(item.id).catch((reason: Error) => setError(reason.message))}>
+            <button type="button" className={`w-full px-3 py-2.5 text-left ${selected === item.id ? 'bg-signal text-on-signal' : 'hover:bg-signal/15'}`} onClick={() => open(item.id).catch((reason: Error) => setError(reason.message))}>
               <span className="font-bold">{item.name}</span>
-              <span className="ml-2 text-quiet">{item.status}</span>
+              <span className={`ml-2 text-sm uppercase tracking-wide ${selected === item.id ? 'opacity-70' : 'text-quiet'}`}>{item.status}</span>
             </button>
           </li>
         ))}
@@ -86,7 +86,7 @@ export function InvestigateView({ refreshKey }: { refreshKey: number }) {
             {timeline.length === 0 ? <li className="text-quiet">Attach an execution from Live.</li> : null}
             {timeline.map((execution) => (
               <li key={execution.traceId} className="border-t border-rule">
-                <button type="button" className="grid w-full grid-cols-[5.5rem_1fr_auto] gap-3 py-2 text-left" onClick={() => setOpenTrace(execution.traceId)}>
+                <button type="button" className={`grid w-full grid-cols-[5.5rem_1fr_auto] gap-3 px-3 py-2.5 text-left ${execution.traceId === openTrace ? 'bg-signal/20' : 'hover:bg-signal/10'}`} onClick={() => setOpenTrace(execution.traceId)}>
                   <time className="font-mono text-quiet">{formatClock(execution.startedAt)}</time>
                   <span>{executionLabel(execution)}</span>
                   <span className={execution.status === 'failed' ? 'text-fail' : 'text-ok'}>
@@ -110,7 +110,7 @@ export function InvestigateView({ refreshKey }: { refreshKey: number }) {
             event.preventDefault()
             api.addNote(selected, note, openTrace || undefined).then(() => api.notes(selected)).then(setNotes).then(() => setNote('')).catch((reason: Error) => setError(reason.message))
           }}>
-            <input className="min-w-0 flex-1 border border-rule bg-tape px-2 py-1" value={note} onChange={(event) => setNote(event.target.value)} placeholder="What did you see?" />
+            <input className="min-w-0 flex-1 border border-rule bg-field px-3 py-2" value={note} onChange={(event) => setNote(event.target.value)} placeholder="What did you see?" />
             <button type="submit" className="border border-ink px-3 py-1">Add note</button>
           </form>
           <div className="mt-6 flex flex-wrap gap-2">
@@ -168,10 +168,10 @@ function PatchReview({ patch, onApproved, onError }: { patch: PatchAction; onApp
       <p>{patch.problem}</p>
       <p>{patch.proposedChange}</p>
       <p className="text-quiet">{patch.expectedImpact}</p>
-      <pre className="overflow-x-auto border border-rule p-3 font-mono text-sm">{patch.diff}</pre>
+      <pre className="overflow-x-auto border border-rule bg-field p-3 font-mono text-sm">{patch.diff}</pre>
       <button type="button" className="mt-3 border border-ink px-3 py-1" onClick={() => setOpen(true)}>Review approval</button>
       {open ? (
-        <div className="mt-4 border border-ink p-4" role="dialog" aria-label="Approve change">
+          <div className="panel mt-4 bg-field p-4 shadow-none" role="dialog" aria-label="Approve change">
           <p className="font-bold">{patch.problem}</p>
           <ul className="list-none p-0">{patch.evidence.map((line) => <li key={line}>{line}</li>)}</ul>
           <p>{patch.proposedChange}</p>

@@ -126,6 +126,10 @@ async function send<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  clearSession: () => send<void>('/api/session', { method: 'DELETE' }),
+  startTrace: () => send<void>('/api/session/trace', { method: 'POST' }),
+  setBurstLimit: (maxItems: number) =>
+    send<void>('/api/session/burst-limit', { method: 'PUT', body: JSON.stringify({ maxItems }) }),
   investigations: (q?: string) => send<Investigation[]>(`/api/investigations${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   createInvestigation: (name: string, objective: string) =>
     send<Investigation>('/api/investigations', { method: 'POST', body: JSON.stringify({ name, objective }) }),
