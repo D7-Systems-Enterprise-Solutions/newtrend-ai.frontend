@@ -29,6 +29,25 @@ test('localhost https skips certificate verification', () => {
   )
 })
 
+test('curl on the browser step includes the bearer token recorded by the API', () => {
+  const curl = toCurl({
+    name: 'GET /api/v1/telemetry-laboratories',
+    httpUrl: 'http://localhost:8080/api/v1/telemetry-laboratories',
+    httpHeaders: 'Accept: application/json',
+  }, [
+    {
+      name: 'GET /api/v1/telemetry-laboratories',
+      httpUrl: 'http://localhost:8080/api/v1/telemetry-laboratories',
+      httpHeaders: 'Authorization: Bearer eyJ.token\nAccept: application/json',
+    },
+  ])
+
+  assert.equal(
+    curl,
+    "curl.exe -X GET 'http://localhost:8080/api/v1/telemetry-laboratories' -H 'Authorization: Bearer eyJ.token' -H 'Accept: application/json'",
+  )
+})
+
 test('curl sends the body for POST and escapes quotes', () => {
   const curl = toCurl({
     name: 'POST /providers',

@@ -22,17 +22,19 @@ export function BehaviorView() {
         event.preventDefault()
         api.saveBaseline(name, executionId, feature).then(() => api.baselines()).then(setBaselines).catch((reason: Error) => setError(reason.message))
       }}>
-        <input className="border border-rule bg-tape px-2 py-1" value={name} onChange={(event) => setName(event.target.value)} />
-        <input className="border border-rule bg-tape px-2 py-1" value={feature} onChange={(event) => setFeature(event.target.value)} />
-        <input className="border border-rule bg-tape px-2 py-1 font-mono" placeholder="Execution id" value={executionId} onChange={(event) => setExecutionId(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" value={name} onChange={(event) => setName(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" value={feature} onChange={(event) => setFeature(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2 font-mono" placeholder="Execution id" value={executionId} onChange={(event) => setExecutionId(event.target.value)} />
         <button type="submit" className="w-fit border border-ink px-3 py-1">Save baseline</button>
       </form>
       {error ? <p className="mt-3 text-fail">{error}</p> : null}
       <ul className="mt-4 list-none p-0">
         {baselines.map((baseline) => (
-          <li key={baseline.id} className="border-t border-rule py-2">
-            <button type="button" className={baselineId === baseline.id ? 'font-bold' : ''} onClick={() => setBaselineId(baseline.id)}>{baseline.name}</button>
-            <span className="ml-2 font-mono text-sm text-quiet">{baseline.applicationVersion}</span>
+          <li key={baseline.id} className="border-t border-rule">
+            <button type="button" className={`flex w-full items-baseline justify-between gap-3 px-3 py-2.5 text-left ${baselineId === baseline.id ? 'bg-signal font-bold text-on-signal' : 'hover:bg-signal/15'}`} onClick={() => setBaselineId(baseline.id)}>
+              <span>{baseline.name}</span>
+              <span className={`font-mono text-sm font-normal ${baselineId === baseline.id ? 'opacity-70' : 'text-quiet'}`}>{baseline.applicationVersion}</span>
+            </button>
           </li>
         ))}
       </ul>

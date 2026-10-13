@@ -21,7 +21,7 @@ export function PerformanceView() {
         setError('')
         api.performance(executionId).then(setBreakdown).catch((reason: Error) => setError(reason.message))
       }}>
-        <input className="border border-rule bg-tape px-2 py-1 font-mono" placeholder="Execution id" value={executionId} onChange={(event) => setExecutionId(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2 font-mono" placeholder="Execution id" value={executionId} onChange={(event) => setExecutionId(event.target.value)} />
         <button type="submit" className="w-fit border border-ink px-3 py-1">Show breakdown</button>
       </form>
       {error ? <p className="mt-3 text-fail">{error}</p> : null}
@@ -30,10 +30,12 @@ export function PerformanceView() {
           <h2 className="m-0 text-lg font-bold">Measured share</h2>
           <ul className="mt-2 list-none p-0">
             {breakdown.bottleneck.map((share) => (
-              <li key={share.layer} className="grid grid-cols-[8rem_1fr_4rem] gap-3 border-t border-rule py-2 font-mono text-sm">
-                <span>{share.layer}</span>
-                <span>{formatMs(share.durationMs)}</span>
-                <span>{Math.round(share.share * 100)}%</span>
+              <li key={share.layer} className="grid grid-cols-[8rem_1fr_auto] items-center gap-3 border-t border-rule py-2.5 text-sm">
+                <span className="font-semibold">{share.layer}</span>
+                <span className="block h-2 bg-rule">
+                  <span className="block h-full bg-signal" style={{ width: `${Math.max(2, Math.round(share.share * 100))}%` }} />
+                </span>
+                <span className="font-mono text-quiet">{Math.round(share.share * 100)}% · {formatMs(share.durationMs)}</span>
               </li>
             ))}
           </ul>
@@ -64,7 +66,7 @@ export function PerformanceView() {
         event.preventDefault()
         api.history(operationKey).then(setHistory).catch((reason: Error) => setError(reason.message))
       }}>
-        <input className="border border-rule bg-tape px-2 py-1 font-mono" placeholder="Operation key" value={operationKey} onChange={(event) => setOperationKey(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2 font-mono" placeholder="Operation key" value={operationKey} onChange={(event) => setOperationKey(event.target.value)} />
         <button type="submit" className="w-fit border border-ink px-3 py-1">Show history</button>
       </form>
       {history ? (
@@ -80,8 +82,8 @@ export function PerformanceView() {
         event.preventDefault()
         api.compareVersions(operationKey, versionA, versionB).then(setComparison).catch((reason: Error) => setError(reason.message))
       }}>
-        <input className="border border-rule bg-tape px-2 py-1" placeholder="Version A" value={versionA} onChange={(event) => setVersionA(event.target.value)} />
-        <input className="border border-rule bg-tape px-2 py-1" placeholder="Version B" value={versionB} onChange={(event) => setVersionB(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" placeholder="Version A" value={versionA} onChange={(event) => setVersionA(event.target.value)} />
+        <input className="border border-rule bg-field px-3 py-2" placeholder="Version B" value={versionB} onChange={(event) => setVersionB(event.target.value)} />
         <button type="submit" className="border border-ink px-3 py-1">Compare versions</button>
       </form>
       {comparison ? <p className="mt-3">p95 moved from {Math.round(comparison.valueA)} ms to {Math.round(comparison.valueB)} ms ({comparison.changePercent}%).</p> : null}
