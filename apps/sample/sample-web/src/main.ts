@@ -1,9 +1,9 @@
-import { initAINewtrend } from '@ai-newtrend/angular';
+import { initNewtrendAi } from '@newtrend-ai/angular';
 import { bootstrapApplication } from '@angular/platform-browser';
 import { appConfig } from './app/app.config';
 import { AppComponent } from './app/app.component';
 
-initAINewtrend({
+initNewtrendAi({
   appName: 'Sample.Web',
   endpoint: 'http://127.0.0.1:4318',
 });

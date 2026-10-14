@@ -76,7 +76,9 @@ export function beginLookup(stack: string, parent: Span | undefined): SourceLook
   if (immediate?.file && parent) {
     lookup.source = immediate;
     lookup.done = true;
-    writeSource(parent, immediate);
+    if (!preferred) {
+      writeSource(parent, immediate);
+    }
     return lookup;
   }
 
@@ -87,7 +89,7 @@ export function beginLookup(stack: string, parent: Span | undefined): SourceLook
   void callerFromStack(stack, preferred)
     .then((source) => {
       lookup.source = source ?? immediate ?? undefined;
-      if (lookup.source && parent?.isRecording()) {
+      if (lookup.source && parent?.isRecording() && !preferredFiles.has(parent)) {
         writeSource(parent, lookup.source);
       }
     })
@@ -150,10 +152,6 @@ export function finishLookup(span: Span, lookup: SourceLookup | undefined): void
     return;
   }
 
-  if (lookup.parent && sourced.has(lookup.parent)) {
-    return;
-  }
-
   writeSource(span, lookup.source);
 }
 
@@ -191,7 +189,7 @@ export function locateCaller(stack: string, methodName?: string, preferredFile?:
     if (!source?.file || (preferredFile && !sameComponent(source.file, preferredFile))) {
       continue;
     }
-    if (preferredFile || source.file.endsWith('.ts')) {
+    if (preferredFile || /\.(tsx?|jsx)$/.test(source.file)) {
       return source;
     }
     html ??= source;
@@ -268,14 +266,14 @@ function sameComponent(file: string, other: string): boolean {
 
 function componentKey(file: string): string {
   const name = file.replace(/\\/g, '/').split('/').pop() ?? file;
-  return name.replace(/\.(ts|html|scss|css)$/i, '');
+  return name.replace(/\.(tsx?|jsx|html|scss|css)$/i, '');
 }
 
 function sourceRank(file: string | undefined): number {
   if (!file) {
     return 0;
   }
-  if (file.endsWith('.ts') || file.endsWith('.cs')) {
+  if (/\.(tsx?|jsx|cs)$/.test(file)) {
     return 3;
   }
   if (file.endsWith('.html')) {
@@ -305,7 +303,7 @@ async function callerFromStack(stack: string, preferredFile?: string): Promise<C
     if (!mapped?.file || (preferredFile && !sameComponent(mapped.file, preferredFile))) {
       continue;
     }
-    if (preferredFile || mapped.file.endsWith('.ts')) {
+    if (preferredFile || /\.(tsx?|jsx)$/.test(mapped.file)) {
       return mapped;
     }
     html ??= mapped;
@@ -490,7 +488,7 @@ function parseFrame(raw: string): Frame | null {
     return null;
   }
 
-  text = text.slice(3);
+  text = text.slice(3).replace(/\s+\[[^\]]*\]$/, '');
   let name: string | undefined;
   if (text.endsWith(')')) {
     const open = text.lastIndexOf(' (');
@@ -514,11 +512,11 @@ function parseFrame(raw: string): Frame | null {
 }
 
 function isSourceFile(file: string): boolean {
-  return /\.(?:ts|html|cs)(?:$|\?)/.test(file);
+  return /\.(?:tsx?|jsx|html|cs)(?:$|\?)/.test(file);
 }
 
 function isIgnored(file: string): boolean {
-  return /node_modules|zone\.js|@angular[\\/]|@opentelemetry|rxjs|polyfills|vite[\\/]deps|@ai-newtrend|source-location|\/sdk\/angular/i.test(
+  return /node_modules|zone\.js|@angular[\\/]|@opentelemetry|rxjs|polyfills|vite[\\/]deps|@newtrend-ai|source-location|\/sdk\/(?:angular|browser|react)/i.test(
     file,
   );
 }
