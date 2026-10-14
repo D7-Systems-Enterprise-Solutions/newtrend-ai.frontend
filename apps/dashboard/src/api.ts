@@ -1,4 +1,5 @@
-const base = 'http://127.0.0.1:4318'
+const configuredBase = import.meta.env.VITE_NEW_TREND_API_URL?.trim() || 'http://127.0.0.1:4318'
+const base = configuredBase.replace(/\/+$/, '')
 
 export type SourceLocation = {
   file?: string | null
@@ -100,18 +101,6 @@ export type SlowSql = {
   traceId: string
 }
 
-export type PatchAction = {
-  id: string
-  problem: string
-  evidence: string[]
-  proposedChange: string
-  files: string[]
-  expectedImpact: string
-  diff: string
-  approved: boolean
-  applied: boolean
-}
-
 async function send<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(base + path, {
     ...init,
@@ -127,12 +116,14 @@ async function send<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   clearSession: () => send<void>('/api/session', { method: 'DELETE' }),
-  startTrace: () => send<void>('/api/session/trace', { method: 'POST' }),
+  startTrace: (traceId?: string) =>
+    send<void>('/api/session/trace', { method: 'POST', body: JSON.stringify({ traceId }) }),
   setBurstLimit: (maxItems: number) =>
     send<void>('/api/session/burst-limit', { method: 'PUT', body: JSON.stringify({ maxItems }) }),
   investigations: (q?: string) => send<Investigation[]>(`/api/investigations${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   createInvestigation: (name: string, objective: string) =>
     send<Investigation>('/api/investigations', { method: 'POST', body: JSON.stringify({ name, objective }) }),
+  deleteInvestigation: (id: string) => send<void>(`/api/investigations/${id}`, { method: 'DELETE' }),
   timeline: (id: string) => send<Execution[]>(`/api/investigations/${id}/timeline`),
   attach: (id: string, traceId: string) =>
     send<Investigation>(`/api/investigations/${id}/executions`, { method: 'POST', body: JSON.stringify({ traceId }) }),
@@ -169,8 +160,4 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ executionId }),
     }),
-  proposePatch: (executionId: string, investigationId: string) =>
-    send<PatchAction>('/api/agent/patch', { method: 'POST', body: JSON.stringify({ executionId, investigationId }) }),
-  approvePatch: (id: string, diff: string) =>
-    send<PatchAction>(`/api/agent/patch/${id}/approve`, { method: 'POST', body: JSON.stringify({ user: 'D7', diff }) }),
 }
