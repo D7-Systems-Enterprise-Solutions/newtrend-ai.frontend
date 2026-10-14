@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { api } from './api'
 import {
   defaultInfrastructureRules,
   loadInfrastructureRules,
@@ -87,14 +88,24 @@ export function ConfigurationView() {
     setBurstError('')
     saveBurstItems(next)
     setBurstItems(String(next))
-    setBurstSaved(true)
+    api.setBurstLimit(next)
+      .then(() => setBurstSaved(true))
+      .catch((error: Error) => {
+        setBurstSaved(false)
+        setBurstError(error.message)
+      })
   }
 
   function restoreBurst() {
     saveBurstItems(defaultBurstItems)
     setBurstItems(String(defaultBurstItems))
     setBurstError('')
-    setBurstSaved(true)
+    api.setBurstLimit(defaultBurstItems)
+      .then(() => setBurstSaved(true))
+      .catch((error: Error) => {
+        setBurstSaved(false)
+        setBurstError(error.message)
+      })
   }
 
   return (
@@ -151,7 +162,7 @@ export function ConfigurationView() {
             Maximum items in a burst
           </label>
           <p className="mt-1 max-w-[62ch] text-sm text-quiet">
-            When the next item would pass this number, a new burst starts and the live table clears. Earlier bursts stay in the session. The highest value is {maxBurstItems}. The default is {defaultBurstItems}.
+            This counts spans in the current burst's table. When the next span would pass this number, that burst finishes and later events start a new burst. The new burst is shown in the live table. Earlier bursts stay in the session. The highest value is {maxBurstItems}. The default is {defaultBurstItems}.
           </p>
           <input
             id="burst-items"

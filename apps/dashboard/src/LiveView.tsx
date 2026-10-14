@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Execution, type Investigation, type Step } from './api'
 import { loadBurstItems } from './burstLimit'
 import { executionLabel, formatClock, formatMs, isInfrastructure, labelStatus, layerLabel, sqlTableTitle, toCurl } from './format'
@@ -16,7 +16,6 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
   const [tab, setTab] = useState<Tab>('execution')
   const [selected, setSelected] = useState<string>('')
   const [tableCleared, setTableCleared] = useState(false)
-  const [listOpen, setListOpen] = useState(false)
   const [roadmapExecution, setRoadmapExecution] = useState<Execution | null>(null)
   const [receiving, setReceiving] = useState(true)
   const [message, setMessage] = useState('')
@@ -25,7 +24,10 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
   const ignoreThroughEpoch = useRef<number | null>(null)
   const selectedRef = useRef(selected)
   selectedRef.current = selected
-  const rolledBursts = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    api.setBurstLimit(loadBurstItems()).catch(() => {})
+  }, [])
+
   const current = tableCleared
     ? undefined
     : executions.find((execution) => execution.traceId === selected) ?? executions.find((execution) => execution.userAction) ?? executions[0]
@@ -55,26 +57,14 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
           epoch.current = snapshot.epoch
         }
         const next = snapshot.executions ?? []
-        const shown = next.find((execution) => execution.traceId === selectedRef.current)
-          ?? next.find((execution) => execution.userAction)
-          ?? next[0]
-        if (shown && shown.steps.length >= loadBurstItems() && !rolledBursts.current.has(shown.traceId)) {
-          rolledBursts.current.add(shown.traceId)
-          knownIds.current = new Set(next.map((execution) => execution.traceId))
-          setTableCleared(true)
-          setRoadmapExecution(null)
-          api.startTrace().catch(() => {
-            rolledBursts.current.delete(shown.traceId)
-          })
-        }
+        const arrived = next.filter((execution) => !knownIds.current.has(execution.traceId))
+        const newest = arrived[0]
         setExecutions(next)
-        setTableCleared((cleared) => {
-          if (!cleared) return false
-          const fresh = next.find((execution) => !knownIds.current.has(execution.traceId))
-          if (!fresh) return true
-          setSelected(fresh.traceId)
-          return false
-        })
+        if (newest) {
+          selectedRef.current = newest.traceId
+          setSelected(newest.traceId)
+          setTableCleared(false)
+        }
         knownIds.current = new Set(next.map((execution) => execution.traceId))
       }
     }
@@ -85,13 +75,6 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
       socket?.close()
     }
   }, [receiving])
-
-  useEffect(() => {
-    if (!listOpen) return
-    const close = () => setListOpen(false)
-    window.addEventListener('click', close)
-    return () => window.removeEventListener('click', close)
-  }, [listOpen])
 
   async function clearSession() {
     const confirmed = window.confirm('Clear this session? The execution list and the table will be removed.')
@@ -134,84 +117,65 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
     <section>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 inline-flex items-center gap-2 text-sm font-semibold">
-          <span className={`size-2 ${receiving && connected ? 'bg-signal motion-safe:animate-pulse' : 'bg-quiet'}`} aria-hidden="true" />
-          <span className={receiving && connected ? '' : 'text-quiet'}>{receiving ? (connected ? 'Receiving' : 'Connecting') : 'Stopped'}</span>
+          <span className={`size-2 ${receiving && connected ? 'bg-ok motion-safe:animate-pulse' : 'bg-quiet'}`} aria-hidden="true" />
+          <span className={receiving && connected ? 'text-ok' : 'text-quiet'}>{receiving ? (connected ? 'Receiving' : 'Connecting') : 'Stopped'}</span>
         </p>
-        <nav className="switch" aria-label="Detail">
-          <TabButton active={tab === 'execution'} onClick={() => setTab('execution')}>Execution</TabButton>
-          <TabButton active={tab === 'technical'} onClick={() => setTab('technical')}>Technical</TabButton>
-        </nav>
+        <span className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            className="border border-ink px-3 py-1"
+            aria-pressed={receiving}
+            onClick={() => setReceiving((open) => !open)}
+          >
+            {receiving ? 'Stop Receiving' : 'Start Receiving'}
+          </button>
+          <button type="button" className="border border-ink px-3 py-1" onClick={() => clearSession()}>
+            Clear session
+          </button>
+          <button type="button" className="border border-ink px-3 py-1" onClick={startTrace}>
+            New trace
+          </button>
+        </span>
       </div>
       {executions.length > 0 ? (
-        <label className="mb-4 block text-sm">
+        <div className="mb-4 text-sm">
           <span className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
             <span>Execution</span>
             <span className="text-quiet">Total: <span className="font-mono">{executions.length}</span></span>
           </span>
-          <span className="relative mt-1 flex items-stretch gap-2" onClick={(event) => event.stopPropagation()}>
-            <button
-              type="button"
-              className="block min-w-0 flex-1 truncate border border-rule bg-field px-3 py-2 text-left"
-              aria-haspopup="listbox"
-              aria-expanded={listOpen}
-              onClick={() => setListOpen((open) => !open)}
-            >
-              {tableCleared ? 'Choose an execution' : current ? executionLabel(current) : 'Choose an execution'}
-            </button>
-            {listOpen ? (
-              <ul className="absolute left-0 top-full z-20 mt-1 max-h-72 w-full max-w-full overflow-auto border border-rule bg-tape shadow-panel" role="listbox">
+          <span className="mt-1 flex items-center gap-4">
+            <span className="relative min-w-0 flex-1">
+              <select
+                aria-label="Execution"
+                className="w-full appearance-none border border-rule bg-field py-2 pl-3 pr-10 text-xl font-semibold"
+                value={tableCleared ? '' : current?.traceId ?? ''}
+                onChange={(event) => {
+                  const traceId = event.target.value
+                  if (!traceId) return
+                  setSelected(traceId)
+                  setTableCleared(false)
+                }}
+              >
+                {tableCleared ? <option value="">Choose an execution</option> : null}
                 {executions.map((execution) => (
-                  <li key={execution.traceId}>
-                    <button
-                      type="button"
-                      className={`block w-full truncate px-3 py-2 text-left hover:bg-signal/25 ${!tableCleared && execution.traceId === current?.traceId ? 'bg-signal/20 font-semibold' : ''}`}
-                      role="option"
-                      aria-selected={!tableCleared && execution.traceId === current?.traceId}
-                      onClick={() => {
-                        setSelected(execution.traceId)
-                        setTableCleared(false)
-                        setListOpen(false)
-                      }}
-                    >
-                      {executionLabel(execution)}
-                    </button>
-                  </li>
+                  <option key={execution.traceId} value={execution.traceId}>{executionLabel(execution)}</option>
                 ))}
-              </ul>
+              </select>
+              <svg className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-ink" viewBox="0 0 16 16" aria-hidden="true">
+                <path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" strokeWidth="1.6" />
+              </svg>
+            </span>
+            {current ? (
+              <p className={`m-0 shrink-0 font-mono text-sm ${current.status === 'failed' ? 'text-fail' : 'text-ok'}`}>
+                {labelStatus(current.status)}
+                {current.durationMs != null ? `  ${formatMs(current.durationMs)}` : ''}
+              </p>
             ) : null}
-            <button
-              type="button"
-              className="shrink-0 border border-ink px-3 py-1"
-              aria-pressed={receiving}
-              onClick={() => setReceiving((open) => !open)}
-            >
-              {receiving ? 'Stop Receiving' : 'Start Receiving'}
-            </button>
-            <button
-              type="button"
-              className="shrink-0 border border-ink px-3 py-1 disabled:border-rule disabled:text-quiet"
-              disabled={!current}
-              aria-haspopup="dialog"
-              onClick={() => {
-                if (!current) return
-                setListOpen(false)
-                setRoadmapExecution(structuredClone(current))
-              }}
-            >
-              Show Roadmap
-            </button>
-            <button type="button" className="shrink-0 border border-ink px-3 py-1" onClick={() => clearSession()}>
-              Clear session
-            </button>
-            <button type="button" className="shrink-0 border border-ink px-3 py-1" onClick={startTrace}>
-              New trace
-            </button>
           </span>
-        </label>
+        </div>
       ) : null}
-      {current ? <ExecutionView key={current.traceId} execution={current} tab={tab} /> : executions.length > 0 ? <p className="m-0 max-w-[42ch] border border-dashed border-rule bg-field px-4 py-6 text-lg leading-snug">The table is clear. Choose an execution to show it again.</p> : <p className="m-0 max-w-[38ch] border border-dashed border-rule bg-field px-4 py-6 text-lg leading-snug">Nothing has happened in this session yet. Use the application, and the execution will print here.</p>}
       {current && investigations.length > 0 ? (
-        <div className="mt-6 flex flex-wrap gap-2">
+        <div className="mb-4 flex flex-wrap gap-2">
           {investigations.map((investigation) => (
             <button key={investigation.id} type="button" className="border border-ink px-3 py-1" onClick={() => attach(investigation.id)}>
               Attach to {investigation.name}
@@ -219,6 +183,30 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
           ))}
         </div>
       ) : null}
+      {current ? (
+        <ExecutionView
+          key={current.traceId}
+          execution={current}
+          tab={tab}
+          showHeading={false}
+          leading={(
+            <nav className="switch" aria-label="Detail">
+              <TabButton active={tab === 'execution'} onClick={() => setTab('execution')}>Execution</TabButton>
+              <TabButton active={tab === 'technical'} onClick={() => setTab('technical')}>Technical</TabButton>
+            </nav>
+          )}
+          besideInfrastructure={(
+            <button
+              type="button"
+              className="border border-ink px-3 py-1 text-sm"
+              aria-haspopup="dialog"
+              onClick={() => setRoadmapExecution(structuredClone(current))}
+            >
+              Show Timeline
+            </button>
+          )}
+        />
+      ) : executions.length > 0 ? <p className="m-0 max-w-[42ch] border border-dashed border-rule bg-field px-4 py-6 text-lg leading-snug">The table is clear. Choose an execution to show it again.</p> : <p className="m-0 max-w-[38ch] border border-dashed border-rule bg-field px-4 py-6 text-lg leading-snug">Nothing has happened in this session yet. Use the application, and the execution will print here.</p>}
       {message ? <p className="mt-3 text-sm">{message}</p> : null}
       {roadmapExecution ? <RoadmapDialog execution={roadmapExecution} onClose={() => setRoadmapExecution(null)} /> : null}
     </section>
@@ -227,7 +215,7 @@ export function LiveView({ investigations, onAttached }: { investigations: Inves
 
 const columns = 'grid-cols-[2.5rem_5.5rem_5.5rem_6.5rem_1fr]'
 
-export function ExecutionView({ execution, tab }: { execution: Execution; tab: Tab }) {
+export function ExecutionView({ execution, tab, showHeading = true, leading, besideInfrastructure }: { execution: Execution; tab: Tab; showHeading?: boolean; leading?: ReactNode; besideInfrastructure?: ReactNode }) {
   const title = executionLabel(execution)
   const failed = execution.status === 'failed'
   const [time, setTime] = useState('')
@@ -244,15 +232,20 @@ export function ExecutionView({ execution, tab }: { execution: Execution; tab: T
 
   return (
     <article>
-      <div className="flex items-baseline justify-between gap-4">
-        <h1 className="m-0 text-2xl font-bold leading-tight">{title}</h1>
-        <p className={`m-0 font-mono text-sm ${failed ? 'text-fail' : 'text-ok'}`}>
-          {labelStatus(execution.status)}
-          {execution.durationMs != null ? `  ${formatMs(execution.durationMs)}` : ''}
-        </p>
-      </div>
+      {showHeading ? (
+        <div className="flex items-baseline justify-between gap-4">
+          <h1 className="m-0 text-2xl font-bold leading-tight">{title}</h1>
+          <p className={`m-0 font-mono text-sm ${failed ? 'text-fail' : 'text-ok'}`}>
+            {labelStatus(execution.status)}
+            {execution.durationMs != null ? `  ${formatMs(execution.durationMs)}` : ''}
+          </p>
+        </div>
+      ) : null}
       {execution.error?.message ? <p className="mt-3 text-fail">{execution.error.operation ? `${execution.error.operation}: ` : ''}{execution.error.message}</p> : null}
-      <div className="mt-6 flex items-center justify-end gap-2">
+      <div className={`flex flex-wrap items-center gap-2 ${showHeading ? 'mt-6' : ''}`}>
+        {leading}
+        <span className="ml-auto flex flex-wrap items-center gap-2">
+          {besideInfrastructure}
         <button
           type="button"
           className="border border-ink px-3 py-1 text-sm disabled:border-rule disabled:text-quiet"
@@ -274,6 +267,7 @@ export function ExecutionView({ execution, tab }: { execution: Execution; tab: T
         >
           Clear filter
         </button>
+        </span>
       </div>
       <div className={`mt-2 grid ${columns} gap-3`}>
         <span className="px-2 py-1 text-sm text-quiet">#</span>
@@ -593,20 +587,33 @@ function LayerLabel({ layer }: { layer: string }) {
 
 function Technical({ execution, steps, hideTrace = false }: { execution: Execution; steps: Step[]; hideTrace?: boolean }) {
   return (
-    <dl className="mt-2 font-mono text-sm">
+    <div className="mt-4">
       {hideTrace ? null : (
-        <div className="border-t border-rule py-2">
-          <dt className="font-sans text-quiet">Trace</dt>
-          <dd className="m-0 break-all">{execution.traceId}</dd>
+        <div className="px-2 py-2">
+          <p className="m-0 text-xs font-bold uppercase tracking-wider">Trace</p>
+          <p className="m-0 mt-1 text-base font-bold">{executionLabel(execution)}</p>
+          <p className="m-0 break-all font-mono text-sm font-bold">{execution.traceId}</p>
         </div>
       )}
-      {steps.map((step) => (
-        <div key={step.spanId} className="border-t border-rule py-2">
-          <dt className="font-sans text-quiet"><LayerLabel layer={step.layer} /> span</dt>
-          <dd className="m-0 break-all">{step.spanId}</dd>
-        </div>
-      ))}
-    </dl>
+      {steps.length === 0 ? null : (
+        <table className="mt-2 w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-rule text-left text-quiet">
+              <th className="w-[42%] px-2 py-1 font-normal">Id</th>
+              <th className="px-2 py-1 font-normal">Name</th>
+            </tr>
+          </thead>
+          <tbody>
+            {steps.map((step) => (
+              <tr key={step.spanId} className="border-t border-rule">
+                <td className="break-all px-2 py-2 align-top font-mono">{step.spanId}</td>
+                <td className="break-words px-2 py-2 align-top">{step.name}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   )
 }
 

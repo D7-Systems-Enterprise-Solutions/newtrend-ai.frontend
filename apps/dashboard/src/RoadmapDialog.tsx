@@ -55,7 +55,7 @@ export function RoadmapDialog({ execution, onClose }: { execution: Execution; on
       <header className="sticky top-0 z-20 border-b border-rule bg-tape px-5 py-4">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <p className="m-0 inline-block bg-signal px-2 py-0.5 font-display text-sm font-bold uppercase tracking-[0.18em] text-on-signal">Roadmap</p>
+            <p className="m-0 inline-block bg-signal px-2 py-0.5 font-display text-sm font-bold uppercase tracking-[0.18em] text-on-signal">Timeline</p>
             <h2 id={titleId} className="m-0 mt-3 w-fit max-w-full pb-1 text-2xl font-bold leading-tight tracking-tight shadow-[inset_0_-3px_0_var(--color-signal)]">
               {title}
             </h2>

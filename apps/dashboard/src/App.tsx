@@ -1,23 +1,24 @@
 import { useEffect, useState } from 'react'
 import { api, type Investigation } from './api'
-import { BehaviorView } from './BehaviorView'
 import { ConfigurationView } from './ConfigurationView'
 import { InvestigateView } from './InvestigateView'
 import { LiveView } from './LiveView'
-import { PerformanceView } from './PerformanceView'
 import { applyTheme, initTheme, type Theme } from './theme'
 
-type Area = 'live' | 'investigate' | 'behavior' | 'performance' | 'configuration'
+type Area = 'live' | 'investigate' | 'configuration'
 
 export default function App() {
   const [area, setArea] = useState<Area>('live')
-  const [theme, setTheme] = useState<Theme>('day')
+  const [theme, setTheme] = useState<Theme>(() => initTheme())
   const [investigations, setInvestigations] = useState<Investigation[]>([])
   const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
-    setTheme(initTheme())
-    api.investigations().then(setInvestigations).catch(() => setInvestigations([]))
+    let cancelled = false
+    api.investigations()
+      .then((items) => { if (!cancelled) setInvestigations(items) })
+      .catch(() => { if (!cancelled) setInvestigations([]) })
+    return () => { cancelled = true }
   }, [refreshKey])
 
   function chooseTheme(next: Theme) {
@@ -43,8 +44,6 @@ export default function App() {
           <nav className="switch" aria-label="Areas">
             <button type="button" aria-current={area === 'live' ? 'page' : undefined} onClick={() => setArea('live')}>Live</button>
             <button type="button" aria-current={area === 'investigate' ? 'page' : undefined} onClick={() => setArea('investigate')}>Investigate</button>
-            <button type="button" aria-current={area === 'behavior' ? 'page' : undefined} onClick={() => setArea('behavior')}>Behavior</button>
-            <button type="button" aria-current={area === 'performance' ? 'page' : undefined} onClick={() => setArea('performance')}>Performance</button>
             <button type="button" aria-current={area === 'configuration' ? 'page' : undefined} onClick={() => setArea('configuration')}>Configuration</button>
           </nav>
           <div className="switch" role="group" aria-label="Theme">
@@ -54,9 +53,7 @@ export default function App() {
         </header>
         <section className="panel flex-1 px-5 py-6 sm:px-6">
           {area === 'live' ? <LiveView investigations={investigations} onAttached={() => setRefreshKey((value) => value + 1)} /> : null}
-          {area === 'investigate' ? <InvestigateView refreshKey={refreshKey} /> : null}
-          {area === 'behavior' ? <BehaviorView /> : null}
-          {area === 'performance' ? <PerformanceView /> : null}
+          {area === 'investigate' ? <InvestigateView refreshKey={refreshKey} onChanged={() => setRefreshKey((value) => value + 1)} /> : null}
           {area === 'configuration' ? <ConfigurationView /> : null}
         </section>
       </div>
