@@ -7,7 +7,7 @@ Newtrend-ai is a modern web application designed to track, analyze, and visualiz
 - Source code file paths, so you know where to look
 - Get the SQL statement along with its parameter values—ready to copy into your preferred client
 - Get the cURL command along with its parameter values—ready to copy into your preferred client
-- Get the parameter values ​​immediately
+- Get the parameter values immediately
 - Export the trace in JSON format
 
 ## Some characteristics
