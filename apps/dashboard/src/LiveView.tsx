@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Execution, type Investigation, type Step } from './api'
 import { loadBurstItems } from './burstLimit'
-import { executionLabel, formatClock, formatMs, isInfrastructure, labelStatus, layerLabel, sqlTableTitle, toCurl } from './format'
+import { executionLabel, formatClock, formatMs, httpPath, httpQueryLines, isInfrastructure, labelStatus, layerLabel, sqlTableTitle, toCurl } from './format'
+import { parameterPieces } from './parameters'
 import { RoadmapDialog } from './RoadmapDialog'
 import { copyAsIs, copyForAi, copyInvolvedTables } from './sqlCopy'
 
@@ -304,6 +305,7 @@ function matches(step: Step, time: string, layer: string, detail: string, detail
   const detailText = [
     step.name,
     step.durationMs != null ? formatMs(step.durationMs) : '',
+    httpQueryLines(step.httpUrl) ?? '',
     step.sqlText ?? '',
     detailed ? step.source?.file : '',
     detailed ? step.source?.function : '',
@@ -339,6 +341,7 @@ function durationShare(duration: number | null | undefined, max: number): number
 
 function StepList({ steps, start, detailed, quiet = false, bars = false, maxDuration = 0, longestId }: { steps: Step[]; start: number; detailed: boolean; quiet?: boolean; bars?: boolean; maxDuration?: number; longestId?: string }) {
   const [sql, setSql] = useState<string | null>(null)
+  const [http, setHttp] = useState<{ step: Step; curl: string } | null>(null)
   const [truncated, setTruncated] = useState<Record<string, boolean>>({})
   if (steps.length === 0) return null
   return (
@@ -346,6 +349,7 @@ function StepList({ steps, start, detailed, quiet = false, bars = false, maxDura
       <ol className="mt-2 list-none p-0">
         {steps.map((step, index) => {
           const curl = toCurl(step, steps)
+          const query = httpQueryLines(step.httpUrl)
           return (
             <li key={step.spanId} className={`grid ${columns} gap-3 border-t border-rule px-1 py-2.5 text-sm ${quiet ? 'text-quiet' : 'hover:bg-signal/10'}`}>
               <span className="font-mono text-quiet">{start + index}</span>
@@ -367,6 +371,11 @@ function StepList({ steps, start, detailed, quiet = false, bars = false, maxDura
                       />
                     </div>
                   ) : null}
+                  {query ? (
+                    <span className="mt-1 block whitespace-pre-wrap break-all font-mono">
+                      <ParameterText text={query} kind="query" />
+                    </span>
+                  ) : null}
                   {step.sqlText ? (
                     <SqlPreview
                       text={step.sqlText}
@@ -384,10 +393,14 @@ function StepList({ steps, start, detailed, quiet = false, bars = false, maxDura
                   ) : null}
                 </span>
                 <span className="flex w-16 shrink-0 flex-col gap-1">
-                  {curl ? <CopyButton text={curl} label="cURL" /> : null}
+                  {curl ? (
+                    <button type="button" className="w-full border border-ink px-2 py-0.5 text-xs text-ink" onClick={() => setHttp({ step, curl })}>
+                      View
+                    </button>
+                  ) : null}
                   {step.sqlText ? (
                     <SqlCopyMenu sql={step.sqlText} />
-                  ) : (
+                  ) : curl ? null : (
                     <CopyButton text={detailText(step, detailed)} />
                   )}
                   {step.sqlText && truncated[step.spanId] ? (
@@ -402,6 +415,7 @@ function StepList({ steps, start, detailed, quiet = false, bars = false, maxDura
         })}
       </ol>
       {sql ? <SqlDialog text={sql} onClose={() => setSql(null)} /> : null}
+      {http ? <HttpDialog step={http.step} curl={http.curl} onClose={() => setHttp(null)} /> : null}
     </>
   )
 }
@@ -410,7 +424,7 @@ function detailText(step: Step, detailed: boolean): string {
   const source = detailed && (step.source?.file || step.source?.function)
     ? `${step.source?.file ?? ''}${step.source?.function ? `  ${step.source.function}` : ''}${step.source?.line ? `:${step.source.line}` : ''}`
     : ''
-  return [step.name, source].filter(Boolean).join('\n')
+  return [step.name, httpQueryLines(step.httpUrl), source].filter(Boolean).join('\n')
 }
 
 const maxPreviewLines = 15
@@ -424,21 +438,29 @@ function SqlPreview({ text, onTruncated }: { text: string; onTruncated: (truncat
   useLayoutEffect(() => {
     const element = node.current
     if (!element) return
-    const lineHeight = lineHeightOf(element)
+    const probe = element.cloneNode(false) as HTMLElement
+    probe.style.position = 'fixed'
+    probe.style.left = '-10000px'
+    probe.style.visibility = 'hidden'
+    probe.style.height = 'auto'
+    probe.style.maxHeight = 'none'
+    probe.style.width = `${element.clientWidth}px`
+    element.parentElement?.appendChild(probe)
+    const lineHeight = lineHeightOf(probe)
     const maxHeight = lineHeight * maxPreviewLines
-    element.textContent = text
-    if (element.scrollHeight <= maxHeight + 1) {
-      setPreview(text)
-      report.current(false)
-      return
-    }
-
-    const fitted = fitPreview(element, text, maxHeight)
-    setPreview(`${fitted}...`)
-    report.current(true)
+    probe.textContent = text
+    const fits = probe.scrollHeight <= maxHeight + 1
+    const fitted = fits ? text : fitPreview(probe, text, maxHeight)
+    probe.remove()
+    setPreview(fits ? text : `${fitted}...`)
+    report.current(!fits)
   }, [text])
 
-  return <span ref={node} className="mt-1 block whitespace-pre-wrap break-words font-mono text-quiet">{preview}</span>
+  return (
+    <span ref={node} className="mt-1 block whitespace-pre-wrap break-words font-mono text-quiet">
+      <ParameterText text={preview} kind="sql" />
+    </span>
+  )
 }
 
 function clipPreview(text: string): string {
@@ -511,12 +533,12 @@ function SqlCopyMenu({ sql }: { sql: string }) {
   )
 }
 
-function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) {
+function CopyButton({ text, label = 'Copy', className = 'w-full border border-ink px-2 py-0.5 text-xs text-ink' }: { text: string; label?: string; className?: string }) {
   const [copied, setCopied] = useState(false)
   return (
     <button
       type="button"
-      className="w-full border border-ink px-2 py-0.5 text-xs text-ink"
+      className={className}
       onClick={() => {
         void navigator.clipboard.writeText(text).then(() => {
           setCopied(true)
@@ -526,6 +548,100 @@ function CopyButton({ text, label = 'Copy' }: { text: string; label?: string }) 
     >
       {copied ? 'Copied' : label}
     </button>
+  )
+}
+
+function HttpDialog({ step, curl, onClose }: { step: Step; curl: string; onClose: () => void }) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const close = useRef(onClose)
+  const [tab, setTab] = useState<'span' | 'curl'>('span')
+  useEffect(() => {
+    close.current = onClose
+  })
+  useEffect(() => {
+    const node = dialog.current
+    if (!node) return
+    let opened = false
+    const handle = () => {
+      if (opened) close.current()
+    }
+    const frame = requestAnimationFrame(() => {
+      if (!node.isConnected || node.open) return
+      node.showModal()
+      opened = true
+    })
+    node.addEventListener('close', handle)
+    return () => {
+      cancelAnimationFrame(frame)
+      node.removeEventListener('close', handle)
+      if (node.open) node.close()
+    }
+  }, [step.spanId])
+
+  function requestClose() {
+    dialog.current?.close()
+  }
+
+  return (
+    <dialog
+      ref={dialog}
+      className="panel m-auto max-h-[80vh] w-[min(72rem,calc(100%-2rem))] overflow-auto p-5 text-ink shadow-none"
+      onClick={(event) => {
+        if (event.target === dialog.current) requestClose()
+      }}
+    >
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="m-0 inline-block bg-signal px-2 py-0.5 font-display text-sm font-bold uppercase tracking-[0.18em] text-on-signal">HTTP</p>
+          <h2 className="m-0 mt-3 break-words text-2xl font-bold leading-tight">{step.name}</h2>
+        </div>
+        <button type="button" className="shrink-0 border border-ink px-3 py-1 text-sm" onClick={requestClose}>
+          Close
+        </button>
+      </div>
+      <nav className="switch" aria-label="HTTP detail">
+        <TabButton active={tab === 'span'} onClick={() => setTab('span')}>Span</TabButton>
+        <TabButton active={tab === 'curl'} onClick={() => setTab('curl')}>cURL</TabButton>
+      </nav>
+      {tab === 'span' ? (
+        <div className="mt-4">
+          <LabeledText label="Request" text={httpSpanDetail(step)} parameters="query" boxClassName="max-h-[65vh]" />
+        </div>
+      ) : (
+        <div className="mt-4">
+          <LabeledText label="cURL" text={curl} parameters="query" />
+        </div>
+      )}
+    </dialog>
+  )
+}
+
+function httpSpanDetail(step: Step): string {
+  const body = step.httpBody?.trim() ? step.httpBody : '—'
+  const path = httpPath(step.httpUrl) || '—'
+  return `Title\n${step.name}\n\nBody\n${body}\n\nPath\n${path}`
+}
+
+function LabeledText({ label, text, parameters, boxClassName = 'max-h-48' }: { label: string; text: string; parameters?: 'sql' | 'query'; boxClassName?: string }) {
+  const shown = text || '—'
+  return (
+    <section>
+      <div className="mb-1 flex items-center justify-between gap-3">
+        <p className="m-0 text-xs font-bold uppercase tracking-wider">{label}</p>
+        <CopyButton text={text} className="shrink-0 border border-ink px-2 py-0.5 text-xs text-ink" />
+      </div>
+      <pre className={`m-0 overflow-auto whitespace-pre-wrap break-words border border-rule bg-field p-3 font-mono text-sm ${boxClassName}`}>
+        {parameters && text ? <ParameterText text={shown} kind={parameters} /> : shown}
+      </pre>
+    </section>
+  )
+}
+
+function ParameterText({ text, kind }: { text: string; kind: 'sql' | 'query' }) {
+  return parameterPieces(text, kind).map((piece, index) =>
+    piece.parameter
+      ? <span key={index} className="text-parameter">{piece.text}</span>
+      : <span key={index}>{piece.text}</span>,
   )
 }
 
@@ -566,7 +682,9 @@ function SqlDialog({ text, onClose }: { text: string; onClose: () => void }) {
           Close
         </button>
       </div>
-      <pre className="m-0 max-h-[65vh] overflow-auto whitespace-pre-wrap break-words border border-rule bg-field p-3 font-mono text-sm">{text}</pre>
+      <pre className="m-0 max-h-[65vh] overflow-auto whitespace-pre-wrap break-words border border-rule bg-field p-3 font-mono text-sm">
+        <ParameterText text={text} kind="sql" />
+      </pre>
     </dialog>
   )
 }
