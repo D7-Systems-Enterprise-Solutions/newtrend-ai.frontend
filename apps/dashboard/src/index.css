@@ -14,6 +14,7 @@
   --color-on-signal: #111111;
   --color-fail: #b42318;
   --color-ok: #166534;
+  --color-parameter: #0b6bcb;
   --color-layer-frontend: #ffcd11;
   --color-layer-http: #111111;
   --color-layer-net: #5c5c5c;
@@ -32,6 +33,7 @@
   --color-on-signal: #111111;
   --color-fail: #ff8d86;
   --color-ok: #8ed4a8;
+  --color-parameter: #6ec1ff;
   --color-layer-frontend: #ffcd11;
   --color-layer-http: #d6d6d6;
   --color-layer-net: #8d8d8d;
