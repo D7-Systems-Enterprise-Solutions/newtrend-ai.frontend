@@ -93,6 +93,32 @@ export function sqlTableTitle(sql: string): string {
   return tables.length > 0 ? `TABLES: ${tables.join(', ')}` : 'TABLES:'
 }
 
+export function httpPath(httpUrl: string | null | undefined): string {
+  const url = httpUrl?.trim()
+  if (!url) return ''
+  try {
+    const parsed = new URL(url)
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    return url
+  }
+}
+
+export function httpQueryLines(httpUrl: string | null | undefined): string | null {
+  const url = httpUrl?.trim()
+  if (!url) return null
+
+  try {
+    const lines: string[] = []
+    new URL(url).searchParams.forEach((value, name) => {
+      lines.push(`${name}=${value}`)
+    })
+    return lines.length > 0 ? lines.join('\n') : null
+  } catch {
+    return null
+  }
+}
+
 const httpMethods = /^(GET|HEAD|POST|PUT|PATCH|DELETE|OPTIONS|TRACE)\b/
 
 export function toCurl(step: {

@@ -1,5 +1,22 @@
 # Newtrend-ai frontend
 
+Newtrend-ai is a modern web application designed to track, analyze, and visualize application behavior in real time. It helps you see exactly what is happening—from the frontend click all the way to the backend repository layer.
+
+## With Newtrend-ai tool you'll get
+- Full traceability from frontend to backend
+- Source code file paths, so you know where to look
+- Get the SQL statement along with its parameter values—ready to copy into your preferred client
+- Get the cURL command along with its parameter values—ready to copy into your preferred client
+- Get the parameter values ​​immediately
+- Export the trace in JSON format
+
+## Some characteristics
+Main window
+![Newtrend AI Main Window](https://github.com/D7-Systems-Enterprise-Solutions/assets/raw/main/newtrend-ai/newtrend-ai-main-window.png)
+
+SQL Query using the parameters values
+![Newtrend AI Main Window](https://github.com/D7-Systems-Enterprise-Solutions/assets/blob/main/newtrend-ai/newtrend-ai-copy-feature-1.png)
+
 This repository is the browser SDK and the dashboard. The SDK turns one user action into one trace and sends it to the Newtrend-ai core. The dashboard reads those traces. It does not collect them.
 
 **This is for development time only.** Do not add this SDK to a production application, and do not deploy the dashboard or the collector as a production service. The collector has no authentication. A trace can contain clicks, HTTP metadata, request data, and SQL from the API. Masking on ingest is a safeguard, not a guarantee. Keep every process on loopback, on your own machine, and use synthetic data. If a build is going to production, leave `initNewtrendAi` out of it.

@@ -23,6 +23,7 @@ import {
 } from '@opentelemetry/sdk-trace-base';
 import { WebTracerProvider } from '@opentelemetry/sdk-trace-web';
 import { beginLookup, captureStack, finishLookup, pinComponent, preloadSourceMaps, type SourceLookup } from './source-location';
+import { burstForSend, clickFollowsPress, startOnPointerDown, traceStateWithBurst } from './gesture';
 
 export interface ComponentOwner {
   component?: object;
@@ -61,7 +62,10 @@ type HttpCapture = { url: string; headers: string[]; body?: string };
 const xhrLookups = new WeakMap<XMLHttpRequest, SourceLookup>();
 const xhrUrls = new WeakMap<XMLHttpRequest, string>();
 const xhrCaptures = new WeakMap<XMLHttpRequest, HttpCapture>();
+const xhrBursts = new WeakMap<XMLHttpRequest, string>();
+const xhrOpened = new WeakSet<XMLHttpRequest>();
 const fetchCaptures = new WeakMap<object, HttpCapture>();
+const fetchBursts = new WeakMap<object, string>();
 const fetchLookups: SourceLookup[] = [];
 const maxHttpBody = 64 * 1024;
 let callerPatched = false;
@@ -70,6 +74,10 @@ const burstHeader = 'X-Newtrend-AI-Burst';
 let burstSpan: Span | undefined;
 let burstId: string | undefined;
 let burstEvent: Event | undefined;
+let burstOrigin: string | undefined;
+let burstControl: HTMLElement | undefined;
+let armedPointer: HTMLElement | undefined;
+let armedAction: HTMLElement | undefined;
 
 export function initNewtrendAi(options: NewtrendAiOptions): void {
   tracerName = options.tracerName ?? '@Newtrend-ai/browser';
@@ -120,8 +128,9 @@ export function initNewtrendAi(options: NewtrendAiOptions): void {
           }
 
           span.setAttribute('newtrend.ai.layer', 'http');
-          if (burstId) {
-            span.setAttribute('newtrend.ai.burst', burstId);
+          const sentBurst = xhrBursts.get(xhr);
+          if (sentBurst) {
+            span.setAttribute('newtrend.ai.burst', sentBurst);
           }
           writeHttp(span, xhrCaptures.get(xhr));
           finishLookup(span, xhrLookups.get(xhr));
@@ -138,8 +147,9 @@ export function initNewtrendAi(options: NewtrendAiOptions): void {
           }
 
           span.setAttribute('newtrend.ai.layer', 'http');
-          if (burstId) {
-            span.setAttribute('newtrend.ai.burst', burstId);
+          const sentBurst = fetchBursts.get(request);
+          if (sentBurst) {
+            span.setAttribute('newtrend.ai.burst', sentBurst);
           }
           writeHttp(span, fetchCapture(request));
           finishLookup(span, fetchLookups.shift());
@@ -276,8 +286,8 @@ function installCallerCapture(): void {
   callerPatched = true;
   const originalSetHeader = XMLHttpRequest.prototype.setRequestHeader;
   XMLHttpRequest.prototype.setRequestHeader = function (name: string, value: string) {
-    if (burstId && name.toLowerCase() === 'tracestate' && !value.includes('Newtrend-AI=')) {
-      value = `Newtrend-AI=${burstId}${value ? `,${value}` : ''}`;
+    if (burstId && name.toLowerCase() === 'tracestate') {
+      value = traceStateWithBurst(value, burstId);
     }
 
     const capture = xhrCaptures.get(this);
@@ -296,15 +306,25 @@ function installCallerCapture(): void {
     if (capture) {
       capture.body = textBody(body);
     }
-    if (action && burstId && !isInternal(url) && !isAsset(url)) {
-      try {
-        this.setRequestHeader(burstHeader, burstId);
-        this.setRequestHeader('tracestate', `Newtrend-AI=${burstId}`);
-      } catch {
-        // open() was not called, or the header was already sent.
+    if (!isInternal(url) && !isAsset(url)) {
+      const opened = xhrOpened.has(this);
+      const id = burstForSend(xhrBursts.get(this), action && burstId ? burstId : undefined, opened);
+      if (id && !opened) {
+        xhrBursts.set(this, id);
+        xhrOpened.add(this);
       }
+      if (id) {
+        try {
+          this.setRequestHeader(burstHeader, id);
+          this.setRequestHeader('tracestate', `Newtrend-AI=${id}`);
+        } catch {
+          // open() was not called, or the header was already sent.
+        }
 
-      return context.with(burstContext(action), () => originalSend.call(this, body));
+        if (action && burstId === id) {
+          return context.with(burstContext(action), () => originalSend.call(this, body));
+        }
+      }
     }
 
     return originalSend.call(this, body);
@@ -319,26 +339,54 @@ function installCallerCapture(): void {
     password?: string | null,
   ) {
     const href = String(url);
+    const tracked = !isInternal(href) && !isAsset(href);
+    if (tracked) {
+      ensurePointerAction();
+    }
     xhrUrls.set(this, href);
     xhrCaptures.set(this, { url: absoluteUrl(href), headers: [] });
-    if (!isInternal(href)) {
+    if (tracked) {
       xhrLookups.set(this, beginLookup(captureStack(), trace.getSpan(context.active())));
     }
 
-    return originalOpen.call(this, method, url, async ?? true, username, password);
+    const opened = originalOpen.call(this, method, url, async ?? true, username, password);
+    if (tracked) {
+      xhrOpened.add(this);
+      if (burstId) {
+        xhrBursts.set(this, burstId);
+        try {
+          this.setRequestHeader(burstHeader, burstId);
+          this.setRequestHeader('tracestate', traceStateWithBurst('', burstId));
+        } catch {
+          // The request is not open yet, or the header was already sent.
+        }
+      } else {
+        xhrBursts.delete(this);
+      }
+    }
+    return opened;
   };
 
   const originalFetch = window.fetch.bind(window);
   window.fetch = (input: RequestInfo | URL, init?: RequestInit) => {
     const url = requestUrl(input);
+    if (!isInternal(url) && !isAsset(url)) {
+      ensurePointerAction();
+    }
     const action = burstSpan;
     if (!isInternal(url)) {
       fetchLookups.push(beginLookup(captureStack(), action ?? trace.getSpan(context.active())));
     }
 
-    const belongs = Boolean(action && burstId && !isInternal(url) && !isAsset(url));
+    const belongs = Boolean(burstId && !isInternal(url) && !isAsset(url));
     const stamped = belongs ? withBurstHeader(input, init) : { input, init };
     rememberFetch(stamped, init?.body);
+    if (belongs && burstId) {
+      const key = stamped.input instanceof Request ? stamped.input : stamped.init;
+      if (key) {
+        fetchBursts.set(key, burstId);
+      }
+    }
     const send = () => originalFetch(stamped.input, stamped.init);
     if (belongs && action) {
       return context.with(burstContext(action), send);
@@ -355,6 +403,16 @@ function burstContext(span: Span): Context {
 }
 
 function listenForInteractions(): void {
+  window.addEventListener('pointerdown', (event) => {
+    const element = eventElement(event);
+    if (!element || selectControl(element)) {
+      return;
+    }
+    const previous = armedAction;
+    if (startOnPointerDown(Boolean(previous && (previous.contains(element) || element.contains(previous))))) {
+      beginGesture(element, event);
+    }
+  }, true);
   for (const eventName of ['click', 'submit', 'change'] as const) {
     document.addEventListener(eventName, (event) => recordInteraction(eventName, event), true);
   }
@@ -368,10 +426,20 @@ function recordInteraction(eventName: string, event: Event): void {
   }
 
   const select = selectControl(element);
-  if (eventName === 'click' && select) {
+  if ((eventName === 'click' || eventName === 'pointerdown') && select) {
     return;
   }
   if (eventName === 'change' && !select) {
+    return;
+  }
+  if (
+    eventName === 'click' &&
+    clickFollowsPress(
+      armedAction === element,
+      Boolean(armedAction?.contains(element)),
+      Boolean(armedAction && element.contains(armedAction)),
+    )
+  ) {
     return;
   }
 
@@ -390,21 +458,7 @@ function recordInteraction(eventName: string, event: Event): void {
     return;
   }
 
-  const owner = resolveComponent?.(controlElement(element) ?? element);
-  if (owner) {
-    if (owner.file || owner.name || owner.line) {
-      pinComponent(span, { file: owner.file, name: owner.name, line: owner.line });
-    }
-    if (owner.stack && !owner.file) {
-      beginLookup(owner.stack, span);
-    }
-    if (owner.component) {
-      const prototype = Object.getPrototypeOf(owner.component) as object | null;
-      if (prototype) {
-        wrapMethods(prototype);
-      }
-    }
-  }
+  attachOwner(span, element);
   span.end();
 }
 
@@ -418,6 +472,120 @@ function selectControl(element: HTMLElement): HTMLSelectElement | null {
   }
 
   return element.closest('select');
+}
+
+function beginGesture(element: HTMLElement, event: Event): void {
+  const label = pointerLabel(element);
+  if (!label) {
+    armedPointer = element;
+    armedAction = undefined;
+    return;
+  }
+
+  const span = trace.getTracer(tracerName).startSpan('click', {
+    attributes: {
+      'newtrend.ai.layer': 'frontend',
+      'newtrend.ai.user_action': label,
+    },
+  });
+  if (!holdAction(span, event)) {
+    return;
+  }
+
+  burstOrigin = 'pointerdown';
+  burstControl = element;
+  armedPointer = element;
+  armedAction = element;
+  attachOwner(span, element);
+  span.end();
+}
+
+function ensurePointerAction(): void {
+  const element = armedPointer;
+  if (!element || selectControl(element) || armedAction === element) {
+    return;
+  }
+
+  const label = pointerLabel(element);
+  if (!label) {
+    return;
+  }
+
+  const span = trace.getTracer(tracerName).startSpan('click', {
+    attributes: {
+      'newtrend.ai.layer': 'frontend',
+      'newtrend.ai.user_action': label,
+    },
+  });
+  if (!holdAction(span)) {
+    return;
+  }
+
+  burstOrigin = 'pointerdown';
+  burstControl = element;
+  armedAction = element;
+  attachOwner(span, element);
+  span.end();
+}
+
+function attachOwner(span: Span, element: HTMLElement): void {
+  const owner = resolveComponent?.(controlElement(element) ?? element);
+  if (!owner) {
+    return;
+  }
+
+  if (owner.file || owner.name || owner.line) {
+    pinComponent(span, { file: owner.file, name: owner.name, line: owner.line });
+  }
+  if (owner.stack && !owner.file) {
+    beginLookup(owner.stack, span);
+  }
+  if (owner.component) {
+    const prototype = Object.getPrototypeOf(owner.component) as object | null;
+    if (prototype) {
+      wrapMethods(prototype);
+    }
+  }
+}
+
+function pointerLabel(element: HTMLElement): string | null {
+  return describeInteraction('click', element) ?? gestureLabel(element);
+}
+
+function gestureLabel(element: HTMLElement): string | null {
+  let node: HTMLElement | null = element;
+  while (node && node !== document.body && node !== document.documentElement) {
+    const text = node.innerText?.replace(/\s+/g, ' ').trim() ?? '';
+    if (text && text.length <= 80) {
+      return `Click "${clip(text)}"`;
+    }
+    node = node.parentElement;
+  }
+
+  return null;
+}
+
+function eventElement(event: Event): HTMLElement | null {
+  const target = event.target;
+  if (target instanceof HTMLElement) {
+    return target;
+  }
+
+  if (target instanceof Element) {
+    return target.parentElement;
+  }
+
+  return null;
+}
+
+function eventTargetControl(event?: Event): HTMLElement | undefined {
+  const target = event?.target;
+  const element = target instanceof HTMLElement ? target : target instanceof Element ? target.parentElement : null;
+  if (!(element instanceof HTMLElement)) {
+    return undefined;
+  }
+
+  return controlElement(element) ?? undefined;
 }
 
 function selectLabel(select: HTMLSelectElement): string {
@@ -438,6 +606,8 @@ function holdAction(span: Span, event?: Event): boolean {
   finishAction();
   burstId = crypto.randomUUID();
   burstSpan = span;
+  burstOrigin = event?.type;
+  burstControl = eventTargetControl(event);
   span.setAttribute('newtrend.ai.burst', burstId);
   const original = span.end.bind(span);
   let ended = false;
@@ -458,6 +628,8 @@ function holdAction(span: Span, event?: Event): boolean {
 
     burstSpan = undefined;
     burstId = undefined;
+    burstOrigin = undefined;
+    burstControl = undefined;
     if (!ended) {
       ended = true;
       span.end = original;
@@ -645,10 +817,7 @@ function withBurstHeader(
 ): { input: RequestInfo | URL; init?: RequestInit } {
   const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
   headers.set(burstHeader, burstId ?? '');
-  const traceState = headers.get('tracestate');
-  if (!traceState?.includes('Newtrend-AI=')) {
-    headers.set('tracestate', `Newtrend-AI=${burstId}${traceState ? `,${traceState}` : ''}`);
-  }
+  headers.set('tracestate', traceStateWithBurst(headers.get('tracestate') ?? '', burstId ?? ''));
   if (input instanceof Request) {
     return { input: new Request(input, { ...init, headers }) };
   }
